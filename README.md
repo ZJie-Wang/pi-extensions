@@ -1,6 +1,6 @@
 # pi-extensions
 
-Sharing extensions I built for the [pi coding agent](https://github.com/earendil-works/pi-coding-agent).
+Sharing extensions I built for my [pi agent harness](https://github.com/earendil-works/pi-coding-agent).
 
 | Extension | Tools | What it is |
 |---|---|---|

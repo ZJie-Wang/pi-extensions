@@ -1,6 +1,6 @@
 {
   "name": "@zj-wang/pi-extensions",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Workflow extensions for the pi coding agent with deliberately lean context injection: ask_user, plan mode, subagents, and a todo tracker.",
   "license": "MIT",
   "type": "module",

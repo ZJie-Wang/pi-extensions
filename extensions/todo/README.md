@@ -4,24 +4,62 @@
 
 The tool is deliberately dumb about when to be used: two guideline bullets tell the model to reach for it only when the work actually has phases, and nothing else.
 
-## What it injects
+## What the model sees
 
-**Guidance** — one snippet line plus two guideline bullets:
+A tool reaches the model in two places: the **tool definition** — name, description, and parameter schema — goes into the payload of every request, and the **guidance** — a one-line snippet plus guideline bullets — is woven into the system prompt. Both are shown in full below.
 
-> Track multi-phase progress
+**Tool definition** (request payload):
 
-> - Use todo for complex, multi-step work with at least three meaningfully coordinated phases. Skip it for simple tasks or when coordination adds no value.
-> - Once a todo tracker is started, remember to update it promptly after each phase completes.
-
-**Schema** — flat, with `additionalProperties: false` so the model cannot sneak extra fields into a call:
-
-```jsonc
+```json
 {
-  "action": "new | update | list | clear",
-  "items": ["string"],    // required for new
-  "completedIds": [1, 2], // for update
-  "activeId": 3           // optional, for update
+  "name": "todo",
+  "description": "Track complex work in phases.",
+  "parameters": {
+    "type": "object",
+    "required": ["action"],
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["new", "update", "list", "clear"],
+        "description": "Action: new creates or replaces the tracker and activates its first phase; update records the progress; list returns the tracker; clear removes it."
+      },
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Phase title."
+        },
+        "minItems": 1,
+        "description": "Ordered phase titles. Required for new."
+      },
+      "completedIds": {
+        "type": "array",
+        "items": { "type": "integer", "minimum": 1 },
+        "minItems": 1,
+        "uniqueItems": true,
+        "description": "IDs completed; required for update. If the active phase is completed, the next pending phase becomes active automatically."
+      },
+      "activeId": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "ID of an unfinished phase to jump to manually."
+      }
+    },
+    "additionalProperties": false
+  }
 }
+```
+
+**System prompt guidance** — this extension's contribution, alongside the other tools in the session:
+
+```
+Available tools:
+- todo: Track multi-phase progress
+
+Guidelines:
+- Use todo for complex, multi-step work with at least three meaningfully coordinated phases. Skip it for simple tasks or when coordination adds no value.
+- Once a todo tracker is started, remember to update it promptly after each phase completes.
 ```
 
 ## Actions

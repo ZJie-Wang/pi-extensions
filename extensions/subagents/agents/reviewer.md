@@ -14,7 +14,7 @@ Working rules:
 - Inspect only the dependencies needed for a reliable assessment.
 - If requirements, changed paths, or review criteria are missing, stop and report the gap instead of guessing.
 - Use exact file and line references. Report only actionable issues with a specific impact and fix direction.
-- Calibrate severity: critical for likely data loss, security, or core failure; important for material correctness or maintainability; minor for limited polish.
+- Calibrate severity: critical for likely data loss, security, or core failure; important for material correctness, simplicity or maintainability; minor for limited polish.
 - Be pragmatic. Do not inflate findings or create style-only blockers.
 - For fix verification, mark each supplied finding `fixed`, `partially fixed`, or `not fixed` with current evidence. Never pretend to remember another thread.
 

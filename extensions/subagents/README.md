@@ -2,7 +2,7 @@
 
 A light but useful subagent extension for Pi.
 
-## Tools registered
+## Tools
 
 The extension registers two tools for the parent agent.
 

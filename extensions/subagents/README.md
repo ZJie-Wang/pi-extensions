@@ -4,6 +4,49 @@ A light but useful subagent extension for Pi.
 
 > Part of [pi-extensions](https://github.com/ZJie-Wang/pi-extensions). Install with `pi install git:github.com/ZJie-Wang/pi-extensions`, or load only this extension via package filtering (see the root README).
 
+## What it injects
+
+Two tools, and each keeps its surface small: one snippet, no fluff, and schemas with four fields or fewer.
+
+### `subagent_run`
+
+**Guidance** — one snippet line plus three guideline bullets:
+
+> Start or continue substantial independent work in named subagent threads
+
+> - Use subagents for tasks that benefit from specialized focus, parallel execution, or keeping noisy exploration out of the main context. Avoid overuse; direct tools are enough for simple I/O and small tasks.
+> - Give each new subagent thread a short memorable name and a self-contained initial prompt; continue that thread when its prior context matters.
+> - Default to foreground subagent_run calls. Use background only to work in parallel with subagents; do not poll—wait while blocked on the result.
+
+**Schema** — four flat fields:
+
+```jsonc
+{
+  "profile": "scout | researcher | reviewer | worker",  // enum of shipped profiles
+  "thread": "string",      // 1–32 chars
+  "prompt": "string",
+  "background": false       // optional
+}
+```
+
+The `profile` enum is generated from the markdown files in [`agents/`](./agents), so it always matches the profiles that actually exist. And a child's own context is lean too: each profile gets exactly the tools it lists — `scout` only `read`/`grep`/`find`/`ls`, for instance — so nothing is injected that a child cannot use.
+
+### `subagent_control`
+
+**Guidance** — one snippet line, no guidelines:
+
+> Control existing subagent threads
+
+**Schema** — three fields:
+
+```jsonc
+{
+  "thread": "string",       // 1–32 chars
+  "action": "status | wait | steer | stop",
+  "message": "string"       // required only for steer
+}
+```
+
 ## Tools
 
 The extension registers two parent-facing tools.

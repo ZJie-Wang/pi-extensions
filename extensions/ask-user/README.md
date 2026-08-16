@@ -1,20 +1,35 @@
 # ask-user
 
-An `ask_user` tool for the pi coding agent: ask one or more user questions with options, descriptions, multi-select, and free text.
+`ask_user` lets the agent ask you questions instead of guessing. One call can carry up to four questions, each with optional multiple-choice options (including trade-off descriptions), multi-select, or plain free text. In the TUI it renders a full dialog — keyboard navigation, an inline editor for custom answers, per-question notes, and a review screen before anything is submitted. In RPC mode it falls back to simple `select`/`input` prompts.
 
-The main agent uses it to surface uncertainty, ambiguity, and blocked decisions instead of guessing.
+It is designed to stay out of the way: the model sees one line of guidance and a small, strictly bounded schema.
 
-## Features
+## What it injects
 
-- Up to **4 questions per call**, each with an optional chip label (`header`).
-- Each question supports 2–4 options with trade-off descriptions, multi-select, or a plain free-text answer (a free-text row is always available).
-- In TUI mode, a full dialog renders the questionnaire with keyboard navigation, an inline editor, per-question notes, and a final review/submit screen.
-- In RPC mode, it falls back to sequential `select`/`input` prompts.
-- Returns a compact result (`answer: ...` or `answers: Q1: ...; Q2: ...`) plus structured `details` for rendering.
+**Guidance** — one snippet line plus a single guideline bullet:
 
-## Context footprint
+> Ask up to 4 concise blocking questions
 
-One-line `promptSnippet`, a single guideline bullet, and a flat schema with strict bounds — see the [root README](../README.md) for the exact injected text.
+> Surface uncertainty or ambiguity. Whenever missing user input blocks progress, use ask_user to ask rather than guess.
+
+**Schema** — a single `questions` array, 1–4 items:
+
+```jsonc
+{
+  "questions": [
+    {
+      "question": "string",      // the prompt text
+      "header": "string",        // short chip label, e.g. "Approach"
+      "options": [               // optional; omit for a free-text question
+        { "label": "string", "description": "string" }
+      ],
+      "multiSelect": false       // optional
+    }
+  ]
+}
+```
+
+The bounds live in the schema itself (question ≤ 1000 chars, header ≤ 16, label ≤ 60, description ≤ 300, 2–4 options), so the model cannot bloat the call.
 
 ## Install
 

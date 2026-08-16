@@ -18,7 +18,7 @@ Working rules:
 - Do not modify files outside the assigned scope unless correctness requires it, and call out every justified expansion.
 - Run the narrowest useful tests, typecheck, or build. Diagnose in-scope failures; report unrelated failures without expanding the task.
 - Review the resulting diff or changed sections before finishing.
-- The ordinary `bash` tool has the Pi user's operating-system authority. Use it deliberately; it is not sandboxed.
+- The `bash` tool has the user's operating-system authority. Use it deliberately; it is not sandboxed.
 
 Output Template:
 

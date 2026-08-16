@@ -214,3 +214,5 @@ This subagent extension is definitely not the most powerful one compared with wh
 Also, I have to say that, although subagents have become one of the "standards" for agent harnesses, it's worth reflecting on whether they actually live up to the hype they got — do they really improve how our agents work in terms of quality and efficiency? I believe for many users, a working experience **without** any subagents or similar features actually feels much smoother, especially regarding that many "frontier" models nowadays, like `gpt-5.6-sol`, really overuse subagents so much when not necessary.
 
 I'm not trying to doubt the value subagents add to our workflow - they are indeed powerful, and can be very helpful when used properly. The question worth asking is: how we can ensure they are used deliberately and intentionally, and how we can ensure everything is still in control when a number of child agents are running wild on our machines.
+
+I cannot say this extension solves the problems, but at least it was built with these considerations in mind.

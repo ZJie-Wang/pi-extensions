@@ -1,5 +1,5 @@
 {
-  "name": "pi-extensions",
+  "name": "@zj-wang/pi-extensions",
   "version": "1.0.0",
   "description": "Workflow extensions for the pi coding agent with deliberately lean context injection: ask_user, plan mode, subagents, and a todo tracker.",
   "license": "MIT",
@@ -15,6 +15,9 @@
   "scripts": {
     "test": "node --test \"extensions/**/*.test.ts\""
   },
+  "files": [
+    "extensions"
+  ],
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-agent-core": "*",

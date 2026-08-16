@@ -76,7 +76,9 @@ There is also a `/todos` command to show or clear the tracker from the prompt li
 ## Install
 
 ```bash
-pi install git:github.com/ZJie-Wang/pi-extensions
+pi install npm:@zj-wang/pi-extensions
+# or directly from git:
+pi install git:github.com/ZJie-Wang/pi-extensions@v1
 ```
 
 Load only this extension:
@@ -85,7 +87,7 @@ Load only this extension:
 {
   "packages": [
     {
-      "source": "git:github.com/ZJie-Wang/pi-extensions",
+      "source": "npm:@zj-wang/pi-extensions",
       "extensions": ["extensions/todo/index.ts"]
     }
   ]

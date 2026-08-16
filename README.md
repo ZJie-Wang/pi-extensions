@@ -16,7 +16,9 @@ Also, these extensions are specifically tuned based on my taste, and I have hand
 ## Install
 
 ```bash
-pi install git:github.com/ZJie-Wang/pi-extensions
+pi install npm:@zj-wang/pi-extensions
+# or directly from git:
+pi install git:github.com/ZJie-Wang/pi-extensions@v1
 ```
 
 That loads all four. If you only want some, filter in `settings.json`:
@@ -25,7 +27,7 @@ That loads all four. If you only want some, filter in `settings.json`:
 {
   "packages": [
     {
-      "source": "git:github.com/ZJie-Wang/pi-extensions",
+      "source": "npm:@zj-wang/pi-extensions",
       "extensions": ["extensions/subagents/index.ts"]
     }
   ]

@@ -1,0 +1,33 @@
+{
+  "name": "pi-extensions",
+  "version": "1.0.0",
+  "description": "Workflow extensions for the pi coding agent with deliberately lean context injection: ask_user, plan mode, subagents, and a todo tracker.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "agent",
+    "subagents",
+    "plan-mode",
+    "todo"
+  ],
+  "scripts": {
+    "test": "node --test \"extensions/**/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/ask-user/index.ts",
+      "./extensions/plan/index.ts",
+      "./extensions/subagents/index.ts",
+      "./extensions/todo/index.ts"
+    ]
+  }
+}

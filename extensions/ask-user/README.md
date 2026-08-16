@@ -1,12 +1,12 @@
 # ask-user
 
-`ask_user` lets the agent ask you questions instead of guessing. One call can carry up to four questions, each with optional multiple-choice options (including trade-off descriptions), multi-select, or plain free text. In the TUI it renders a full dialog — keyboard navigation, an inline editor for custom answers, per-question notes, and a review screen before anything is submitted. In RPC mode it falls back to simple `select`/`input` prompts.
+`ask_user` lets the agent ask you questions instead of guessing.
 
-It is designed to stay out of the way. Here is exactly what the model sees for it.
+## What the user sees
+
+![ask_user dialog](./screenshot.png)
 
 ## What the model sees
-
-A tool reaches the model in two places: the **tool definition** — name, description, and parameter schema — goes into the payload of every request, and the **guidance** — a one-line snippet plus guideline bullets — is woven into the system prompt. Both are shown in full below.
 
 **Tool definition** (request payload):
 

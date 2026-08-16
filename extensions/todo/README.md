@@ -1,8 +1,14 @@
 # todo
 
-`todo` tracks complex, multi-phase work so the agent does not have to keep the whole plan in its head. The tracker lives in the session itself — it is reconstructed from past tool results — so it survives restarts and stays visible across the session tree. In the TUI a live widget shows the phases, the active one, and a progress bar.
+A todo tracker lives in the session.
+
+It is reconstructed from past tool results, so it survives restarts and stays visible across the session tree. In the TUI a live widget shows the phases, the active one, and a progress bar.
 
 The tool is deliberately dumb about when to be used: two guideline bullets tell the model to reach for it only when the work actually has phases, and nothing else.
+
+## What the user sees
+
+![todo widget](./screenshot.png)
 
 ## What the model sees
 

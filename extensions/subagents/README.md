@@ -17,7 +17,7 @@ Start a named thread by providing a profile:
 Continue the same child conversation by omitting `profile`:
 
 ```json
-{"thread":"Dario","prompt":"Now tell me what is the latest Claude model"}
+{"thread":"Dario","prompt":"What is the ToS? Explain more about the reasons you mentioned."}
 ```
 
 Run independent work in the background:

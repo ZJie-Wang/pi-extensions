@@ -9,11 +9,9 @@ Sharing extensions I built for the [pi coding agent](https://github.com/earendil
 | [subagents](extensions/subagents/README.md) | `subagent_run`, `subagent_control` | Isolated child pi agents with profiles, named threads, and background runs. |
 | [todo](extensions/todo/README.md) | `todo` | Multi-phase progress tracker with a live TUI widget. |
 
-The main reason I built these rather than just installing community extensions is that most of them inject too much tool guidance and too many parameter schemas into the model's context, which seems to be unnecessary and more or less pollutes the context.
+The main reason I built these rather than just installing community extensions is that most of them inject too much tool guidance/descriptions into the model's context, which actually violates the principle of clean context proposed by pi.
 
-Also, these extensions are specifically tuned based on my taste, and I have actually hand-written many of the instructions and guidelines that come with them.
-
-All extensions are tested in my own pi harness with the deepseek-v4-flash model, and the experience is quite smooth. So I would assume it should work well with most models out of the box.
+Also, these extensions are specifically tuned based on my taste, and I have hand-written many of the instructions and guidelines that come with them. All extensions are tested in my own pi harness with the `deepseek-v4-flash` model, and the experience is quite smooth. So I would assume it should work well with most models out of the box.
 
 ## Install
 

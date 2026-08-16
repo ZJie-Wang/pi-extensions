@@ -128,7 +128,7 @@ Read-only means the child is not given mutation tools. This is a Pi capability b
       "profile": {
         "type": "string",
         "enum": ["researcher", "reviewer", "scout", "worker"],
-        "description": "Profile for the named child. Include a profile to start a new thread; omit it when continuing an existing one. Available:\nresearcher: Search the web to investigate focused external questions, then return a concise, sourced brief.\nreviewer: Assess work against stated requirements; use for essential review gates.\nscout: Explore massive codebases, locate evidence in noisy environments, and return brief findings.\nworker: Implement disjoint, well-scoped changes and return a concise, verifiable integration summary."
+        "description": "Profile for the named child. Include a profile to start a new thread; omit it when continuing an existing one. Available: ${profiles.describe()}"
       },
       "thread": {
         "type": "string",

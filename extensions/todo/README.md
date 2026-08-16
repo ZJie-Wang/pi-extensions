@@ -4,15 +4,11 @@ A todo tracker lives in the session.
 
 It is reconstructed from past tool results, so it survives restarts and stays visible across the session tree. In the TUI a live widget shows the phases, the active one, and a progress bar.
 
-The tool is deliberately dumb about when to be used: two guideline bullets tell the model to reach for it only when the work actually has phases, and nothing else.
-
 ## What the user sees
 
 ![todo widget](./screenshot.png)
 
 ## What the model sees
-
-A tool reaches the model in two places: the **tool definition** — name, description, and parameter schema — goes into the payload of every request, and the **guidance** — a one-line snippet plus guideline bullets — is woven into the system prompt. Both are shown in full below.
 
 **Tool definition** (request payload):
 

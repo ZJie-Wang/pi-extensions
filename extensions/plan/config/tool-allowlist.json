@@ -1,0 +1,11 @@
+[
+  "read",
+  "grep",
+  "find",
+  "ls",
+  "bash",
+  "ask_user",
+  "subagent_run",
+  "subagent_control",
+  "present_plan"
+]

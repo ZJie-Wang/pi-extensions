@@ -1,14 +1,3 @@
-/**
- * Plan mode extension.
- *
- * Plan mode is intentionally narrow: read-only exploration, then `present_plan`
- * writes the proposed plan to a markdown file and opens it for the user.
- *
- * Build tools are captured at entry and restored at exit. The build-mode handoff
- * waits for `agent_settled` — the moment Pi will not continue running
- * automatically — before starting a fresh turn with the restored tools.
- */
-
 import { readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
@@ -30,32 +19,23 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { writePlanMarkdownFile } from "./plan-file.ts";
+import { loadToolAllowlist } from "./lib/tool-allowlist.ts";
+import { writePlanMarkdownFile } from "./lib/plan-file.ts";
 import {
   containsPlanHeader,
   extractPlanItems,
   getUnsafeCommandReason,
-} from "./utils.ts";
+} from "./lib/utils.ts";
 
 const PLAN_TOOL_NAME = "present_plan";
 const PLAN_ONLY_TOOLS = new Set([PLAN_TOOL_NAME]);
 const STATE_ENTRY_TYPE = "plan-mode-state";
 const WIDGET_KEY = "plan-mode";
 const PLAN_FILE_NAME = "PLAN.md";
+const PLAN_TOOL_ALLOWLIST = loadToolAllowlist(
+  new URL("config/tool-allowlist.json", import.meta.url),
+);
 
-/** Tools active while planning. Order matters only for display. */
-const PLAN_TOOL_CANDIDATES = [
-  "read",
-  "grep",
-  "find",
-  "ls",
-  "bash",
-  "ask_user",
-  "subagent",
-  PLAN_TOOL_NAME,
-];
-const ALLOWED_PLAN_TOOLS = new Set(PLAN_TOOL_CANDIDATES);
-const ALLOWED_SUBAGENTS = new Set(["scout", "researcher"]);
 /** Fallback build toolset when no snapshot was captured (corrupted state only). */
 const DEFAULT_BUILD_TOOLS = [
   "read",
@@ -66,11 +46,6 @@ const DEFAULT_BUILD_TOOLS = [
   "find",
   "ls",
 ];
-
-type SubagentInput = {
-  agent?: unknown;
-  tasks?: unknown;
-};
 
 interface PlanState {
   planModeEnabled: boolean;
@@ -136,31 +111,6 @@ function readState(data: unknown): PlanState | undefined {
       ? { lastPlanPath: record.lastPlanPath }
       : {}),
   };
-}
-
-function requestedSubagents(input: SubagentInput): string[] {
-  const agents: string[] = [];
-  if (typeof input.agent === "string") agents.push(input.agent);
-  if (Array.isArray(input.tasks)) {
-    for (const task of input.tasks) {
-      if (task && typeof task === "object") {
-        const agent = (task as { agent?: unknown }).agent;
-        if (typeof agent === "string") agents.push(agent);
-      }
-    }
-  }
-  return agents;
-}
-
-function subagentBlockReason(input: SubagentInput): string | undefined {
-  const agents = requestedSubagents(input);
-  if (agents.length === 0)
-    return "Plan mode: subagent calls must name an allowed agent (scout or researcher).";
-  const blocked = agents.filter((agent) => !ALLOWED_SUBAGENTS.has(agent));
-  if (blocked.length > 0) {
-    return `Plan mode: subagent(s) not allowed while planning: ${blocked.join(", ")}. Use scout or researcher only.`;
-  }
-  return undefined;
 }
 
 function loadMarkdownPrompt(
@@ -439,7 +389,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
   pi.registerFlag("plan", {
     description:
-      "Start in plan mode (read-only exploration, write plan to markdown)",
+      "Start in plan mode (configured tools, write plan to markdown)",
     type: "boolean",
     default: false,
   });
@@ -472,15 +422,27 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
   function planToolNames(): string[] {
     const available = availableToolNames();
-    return PLAN_TOOL_CANDIDATES.filter((name) => available.has(name));
+    return PLAN_TOOL_ALLOWLIST.filter((name) => available.has(name));
+  }
+
+  function unavailablePlanToolNames(): string[] {
+    const available = availableToolNames();
+    return PLAN_TOOL_ALLOWLIST.filter((name) => !available.has(name));
   }
 
   function captureBuildTools(): string[] {
     return normalToolNames(pi.getActiveTools());
   }
 
-  function applyPlanTools(): void {
+  function applyPlanTools(ctx: ExtensionContext): void {
     setActiveToolsFiltered(planToolNames());
+    const unavailable = unavailablePlanToolNames();
+    if (ctx.hasUI && unavailable.length > 0) {
+      ctx.ui.notify(
+        `Plan mode ignored unavailable configured tools: ${unavailable.join(", ")}`,
+        "warning",
+      );
+    }
   }
 
   function restoreBuildTools(): void {
@@ -543,7 +505,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     cancelImplementationHandoff();
     if (!planModeEnabled) previousTools = captureBuildTools();
     planModeEnabled = true;
-    applyPlanTools();
+    applyPlanTools(ctx);
     updateUI(ctx);
     persistState();
     if (notify && ctx.hasUI)
@@ -602,7 +564,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
     if (planModeEnabled) {
       previousTools = previousTools ?? oldPreviousTools ?? captureBuildTools();
-      applyPlanTools();
+      applyPlanTools(ctx);
     } else {
       removePlanOnlyTools();
     }
@@ -978,13 +940,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event) => {
     if (!planModeEnabled) return;
 
-    if (!ALLOWED_PLAN_TOOLS.has(event.toolName)) {
-      return {
-        block: true,
-        reason: `Plan mode: tool '${event.toolName}' is disabled. Use ${PLAN_TOOL_NAME} to write the plan file, or use /plan off manually before implementation.`,
-      };
-    }
-
     if (isToolCallEventType("bash", event)) {
       const reason = getUnsafeCommandReason(event.input.command);
       if (reason) {
@@ -993,11 +948,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
           reason: `Plan mode: bash command blocked (${reason}). Use ${PLAN_TOOL_NAME} to finish planning, or /plan off manually before implementation.`,
         };
       }
-    }
-
-    if (isToolCallEventType<"subagent", SubagentInput>("subagent", event)) {
-      const reason = subagentBlockReason(event.input);
-      if (reason) return { block: true, reason };
     }
   });
 
@@ -1020,7 +970,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     const activeTools = planToolNames().join(", ") || "none";
     return {
       systemPrompt: `${event.systemPrompt}\n\n${loadMarkdownPrompt(
-        "plan-mode-instruction.md",
+        "config/plan-mode-instruction.md",
         {
           activeTools,
           planFile: PLAN_FILE_NAME,

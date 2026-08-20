@@ -30,6 +30,8 @@ After saving the plan, the extension asks the user what to do next, options incl
 
 For either implementation action, a second prompt asks whether to start in current context, or compact first before starting.
 
-## Customize instruction
+## Adapt to your harness
 
-Edit `plan-mode-instruction.md` and run `/reload`.
+- Edit `config/tool-allowlist` to configure your own custom tools (if any).
+- Edit `plan-mode-instruction.md` if you have preferences about how the plan-mode agent should behave or what the plan should look like.
+- Run `/reload` or start a new pi session to apply the changes.

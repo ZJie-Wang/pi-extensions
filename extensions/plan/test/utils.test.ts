@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getUnsafeCommandReason } from "./utils.ts";
+import { getUnsafeCommandReason } from "../lib/utils.ts";
 
 test("safe read-only commands are allowed", () => {
 	for (const command of [

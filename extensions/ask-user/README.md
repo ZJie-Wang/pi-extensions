@@ -22,7 +22,7 @@
         "type": "array",
         "minItems": 1,
         "maxItems": 4,
-        "description": "One or more questions to ask the user.",
+        "description": "Question(s) to ask.",
         "items": {
           "type": "object",
           "required": ["question", "header"],
@@ -30,7 +30,7 @@
             "question": {
               "type": "string",
               "maxLength": 1000,
-              "description": "The complete question to ask. Clear, specific, ends with a question mark."
+              "description": "The complete question. Clear, specific, ends with a question mark."
             },
             "header": {
               "type": "string",

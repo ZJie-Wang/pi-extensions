@@ -47,7 +47,7 @@ const QuestionSchema = Type.Object({
   question: Type.String({
     maxLength: MAX_QUESTION_CHARS,
     description:
-      "The complete question to ask. Clear, specific, ends with a question mark.",
+      "The complete question. Clear, specific, ends with a question mark.",
   }),
   header: Type.String({
     maxLength: MAX_HEADER_CHARS,
@@ -73,7 +73,7 @@ const AskUserParams = Type.Object({
   questions: Type.Array(QuestionSchema, {
     minItems: 1,
     maxItems: MAX_QUESTIONS,
-    description: "One or more questions to ask the user.",
+    description: "Question(s) to ask.",
   }),
 });
 

@@ -76,20 +76,5 @@ There is also a `/todos` command to show or clear the tracker from the prompt li
 ## Install
 
 ```bash
-pi install npm:@zj-wang/pi-extensions
-# or directly from git:
-pi install git:github.com/ZJie-Wang/pi-extensions@v1
-```
-
-Load only this extension:
-
-```json
-{
-  "packages": [
-    {
-      "source": "npm:@zj-wang/pi-extensions",
-      "extensions": ["extensions/todo/index.ts"]
-    }
-  ]
-}
+pi install npm:@zjie-wang/pi-todo
 ```

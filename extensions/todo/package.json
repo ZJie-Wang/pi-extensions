@@ -1,0 +1,40 @@
+{
+  "name": "@zjie-wang/pi-todo",
+  "version": "0.1.0",
+  "description": "Session-persistent multi-phase todo tracker with a live Pi TUI widget",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZJie-Wang/pi-extensions.git",
+    "directory": "extensions/todo"
+  },
+  "homepage": "https://github.com/ZJie-Wang/pi-extensions/tree/main/extensions/todo",
+  "bugs": "https://github.com/ZJie-Wang/pi-extensions/issues",
+  "files": [
+    "*.ts",
+    "README.md",
+    "LICENSE",
+    "screenshot.png"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "image": "https://raw.githubusercontent.com/ZJie-Wang/pi-extensions/main/extensions/todo/screenshot.png"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

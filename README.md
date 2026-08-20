@@ -13,7 +13,20 @@ Sharing extensions I built for my [pi agent harness](https://github.com/earendil
 
 ## Install
 
-Just copy the extension folders straight into `~/.pi/agent/extensions/`. I will also try to publish these extensions individually as npm packages, so you can discover them from pi's package catalog and install them more easily.
+Install the extensions you want from npm:
+
+```bash
+pi install npm:@zjie-wang/pi-ask-user
+pi install npm:@zjie-wang/pi-plan
+pi install npm:@zjie-wang/pi-subagents
+pi install npm:@zjie-wang/pi-todo
+```
+
+To load all four directly from GitHub instead:
+
+```bash
+pi install git:github.com/ZJie-Wang/pi-extensions
+```
 
 ## Some notes
 

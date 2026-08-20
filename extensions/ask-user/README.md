@@ -85,20 +85,5 @@ Guidelines:
 ## Install
 
 ```bash
-pi install npm:@zj-wang/pi-extensions
-# or directly from git:
-pi install git:github.com/ZJie-Wang/pi-extensions@v1
-```
-
-Load only this extension:
-
-```json
-{
-  "packages": [
-    {
-      "source": "npm:@zj-wang/pi-extensions",
-      "extensions": ["extensions/ask-user/index.ts"]
-    }
-  ]
-}
+pi install npm:@zjie-wang/pi-ask-user
 ```

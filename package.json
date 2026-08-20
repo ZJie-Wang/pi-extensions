@@ -1,0 +1,19 @@
+{
+  "name": "pi-extensions",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "extensions/*"
+  ],
+  "scripts": {
+    "test": "node --test extensions/plan/test/*.test.ts extensions/subagents/test/*.test.ts"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/ask-user/index.ts",
+      "./extensions/plan/index.ts",
+      "./extensions/subagents/index.ts",
+      "./extensions/todo/index.ts"
+    ]
+  }
+}

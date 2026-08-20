@@ -2,6 +2,12 @@
 
 A light but useful subagent extension for Pi.
 
+## Install
+
+```bash
+pi install npm:@zjie-wang/pi-subagents
+```
+
 ## Tools
 
 The extension registers two tools for the parent agent.

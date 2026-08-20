@@ -1,0 +1,41 @@
+{
+  "name": "@zjie-wang/pi-plan",
+  "version": "0.1.0",
+  "description": "Read-only planning mode for Pi that writes and opens Markdown plans",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZJie-Wang/pi-extensions.git",
+    "directory": "extensions/plan"
+  },
+  "homepage": "https://github.com/ZJie-Wang/pi-extensions/tree/main/extensions/plan",
+  "bugs": "https://github.com/ZJie-Wang/pi-extensions/issues",
+  "files": [
+    "index.ts",
+    "lib",
+    "config",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

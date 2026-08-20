@@ -2,6 +2,12 @@
 
 Plan mode for Pi: read-only exploration, then write/open a markdown plan/spec file.
 
+## Install
+
+```bash
+pi install npm:@zjie-wang/pi-plan
+```
+
 ## Entry points
 
 - `/plan` — toggle plan mode
@@ -35,3 +41,7 @@ For either implementation action, a second prompt asks whether to start in curre
 - Edit `config/tool-allowlist` to configure your own custom tools (if any).
 - Edit `plan-mode-instruction.md` if you have preferences about how the plan-mode agent should behave or what the plan should look like.
 - Run `/reload` or start a new pi session to apply the changes.
+
+## Note
+
+Plan mode is a workflow guard, not a security sandbox. It restricts tools and blocks common mutating shell commands, but allowed commands such as tests and external tools such as subagents can still have side effects. Review `config/tool-allowlist.json` and adjust it for your environment.

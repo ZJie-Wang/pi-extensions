@@ -687,13 +687,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
         return "Implementation setup was cancelled; staying in plan mode.";
       }
 
+      const planRevised = choice === "implement-revised";
       leavePlanMode(ctx);
-      const prompt = `Implement the ${planPath}.`;
-      queueImplementation(
-        prompt,
-        implementationContext,
-        choice === "implement-revised",
-      );
+      const prompt = planRevised
+        ? `${planPath} was revised manually. Re-read it from disk first, then implement it.`
+        : `Implement the ${planPath}.`;
+      queueImplementation(prompt, implementationContext, planRevised);
       return implementationContext === "compact"
         ? "User chose to implement it after context compaction; plan mode is " +
             "off and compaction will start after this planning turn settles."

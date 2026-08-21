@@ -87,3 +87,7 @@ Guidelines:
 ```bash
 pi install npm:@zjie-wang/pi-ask-user
 ```
+
+## Source
+
+Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. The repo README covers the design notes, the other extensions, and how to install everything at once.

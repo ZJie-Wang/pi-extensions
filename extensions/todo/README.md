@@ -78,3 +78,7 @@ There is also a `/todos` command to show or clear the tracker from the prompt li
 ```bash
 pi install npm:@zjie-wang/pi-todo
 ```
+
+## Source
+
+Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. The repo README covers the design notes, the other extensions, and how to install everything at once.

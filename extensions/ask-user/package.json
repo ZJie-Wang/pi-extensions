@@ -1,6 +1,6 @@
 {
   "name": "@zjie-wang/pi-ask-user",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Interactive question dialog for Pi with options, multi-select, and free-text answers",
   "license": "MIT",
   "type": "module",

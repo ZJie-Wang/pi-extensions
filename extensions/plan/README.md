@@ -45,3 +45,7 @@ For either implementation action, a second prompt asks whether to start in curre
 ## Note
 
 Plan mode is a workflow guard, not a security sandbox. It restricts tools and blocks common mutating shell commands, but allowed commands such as tests and external tools such as subagents can still have side effects. Review `config/tool-allowlist.json` and adjust it for your environment.
+
+## Source
+
+Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. The repo README covers the design notes, the other extensions, and how to install everything at once.

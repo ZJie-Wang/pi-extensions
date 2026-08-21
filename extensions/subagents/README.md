@@ -222,3 +222,7 @@ Also, I have to say that, although subagents have become one of the "standards" 
 I'm not trying to doubt the value subagents add to our workflow - they are indeed powerful, and can be very helpful when used properly. The question worth asking is: how we can ensure they are used deliberately and intentionally, and how we can ensure everything is still in control when a number of child agents are running wild on our machines.
 
 I cannot say this extension solves the problems, but at least it was built with these considerations in mind.
+
+## Source
+
+Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. The repo README covers the design notes, the other extensions, and how to install everything at once.

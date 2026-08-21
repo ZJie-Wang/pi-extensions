@@ -28,6 +28,8 @@ To load all four directly from GitHub instead:
 pi install git:github.com/ZJie-Wang/pi-extensions
 ```
 
+After installing the packages, you should be able to find them at `~/.pi/agent/npm/node_modules/@zjie-wang`. You can also install them by just copying the extension folders into your `~/.pi/agent/extensions` and maintain them yourself.
+
 ## Some notes
 
 These extensions are definitely not the most powerful ones you can find, and that's not what I'm trying to achieve either. I just want something light and controllable while being as useful as possible. I personally don't have a super heavy, fully automatic workflow to run in my pi harness (I also don't think pi is meant to run things like that). Instead, I just want an agent I can collaborate with without needing to "fight first".

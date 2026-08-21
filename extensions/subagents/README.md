@@ -225,4 +225,4 @@ I cannot say this extension solves the problems, but at least it was built with 
 
 ## Source
 
-Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. The repo README covers the design notes, the other extensions, and how to install everything at once.
+Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. This extension works individually, but it is worth reviewing the collection README — it covers the design notes and the other extensions.

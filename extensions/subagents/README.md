@@ -225,4 +225,4 @@ I cannot say this extension solves the problems, but at least it was built with 
 
 ## Source
 
-Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. This extension works individually; the collection README also covers the design notes, the other extensions, and how to customize the installed files — e.g. copying them from `~/.pi/agent/npm/node_modules/@zjie-wang` to maintain them yourself.
+Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. This extension works individually, but it is worth reviewing the collection README — it covers the design notes and the other extensions.

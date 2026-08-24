@@ -41,7 +41,7 @@
               "type": "array",
               "minItems": 2,
               "maxItems": 4,
-              "description": "2-4 distinct options that are mutually exclusive unless multiSelect, with the recommended option first. A free-text row is added automatically—do not author one. Omit for a free-text question.",
+              "description": "2-4 distinct options that are mutually exclusive unless multiSelect, with the recommended option first. A free-text row is added automatically; do not author one. Omit options for a free-text question.",
               "items": {
                 "type": "object",
                 "required": ["label", "description"],

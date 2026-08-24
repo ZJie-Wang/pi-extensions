@@ -26,7 +26,7 @@ Output Template:
 What you inspected and intentionally did not inspect.
 
 ## Relevant Files
-- `path:line-line` — why it matters
+- `path:line-line`: why it matters
 
 ## Findings
 Concise evidence-backed findings and how the pieces connect.

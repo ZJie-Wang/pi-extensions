@@ -57,7 +57,7 @@ const QuestionSchema = Type.Object({
     Type.Array(OptionSchema, {
       minItems: MIN_OPTIONS,
       maxItems: MAX_OPTIONS,
-      description: `${MIN_OPTIONS}-${MAX_OPTIONS} distinct options that are mutually exclusive unless multiSelect, with the recommended option first. A free-text row is added automatically—do not author one. Omit for a free-text question.`,
+      description: `${MIN_OPTIONS}-${MAX_OPTIONS} distinct options that are mutually exclusive unless multiSelect, with the recommended option first. A free-text row is added automatically; do not author one. Omit options for a free-text question.`,
     }),
   ),
   multiSelect: Type.Optional(

@@ -51,7 +51,7 @@ interface ToolDetails {
 
 /** Text visible to the parent model. Cost is deliberately omitted. */
 function outcomeText(thread: SubagentThread, outcome: RunOutcome): string {
-  const heading = `Thread ${thread.id} (${thread.profile.name}) — ${outcome.status}`;
+  const heading = `Thread ${thread.id} (${thread.profile.name}) · ${outcome.status}`;
   if (outcome.status === "completed")
     return capOutput(`${heading}\n\n${outcome.output}`);
   return capOutput(
@@ -407,7 +407,7 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
       promptGuidelines: [
         "Use subagents for tasks that benefit from specialized focus, parallel execution, or keeping noisy exploration out of the main context. Avoid overuse; direct tools are enough for simple I/O and small tasks.",
         "Give each new subagent thread a short memorable name and a self-contained initial prompt; continue that thread when its prior context matters.",
-        "Default to foreground subagent_run calls. Use background only to work in parallel with subagents; do not poll—wait while blocked on the result.",
+        "Default to foreground subagent_run calls. Use background only to work in parallel with subagents. Do not poll; wait while blocked on the result.",
       ],
       parameters: SubagentRunParams(),
       async execute(_toolCallId, params, signal, onUpdate, ctx) {

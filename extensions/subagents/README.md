@@ -166,7 +166,7 @@ Available tools:
 Guidelines:
 - Use subagents for tasks that benefit from specialized focus, parallel execution, or keeping noisy exploration out of the main context. Avoid overuse; direct tools are enough for simple I/O and small tasks.
 - Give each new subagent thread a short memorable name and a self-contained initial prompt; continue that thread when its prior context matters.
-- Default to foreground subagent_run calls. Use background only to work in parallel with subagents; do not poll—wait while blocked on the result.
+- Default to foreground subagent_run calls. Use background only to work in parallel with subagents. Do not poll; wait while blocked on the result.
 ```
 
 The `profile` enum is generated from the markdown files in [`agents/`](./agents), so it always matches the profiles that actually exist. And a child's own context is lean too: each profile gets exactly the tools it lists — `scout` only `read`/`grep`/`find`/`ls`, for instance — so nothing is injected that a child cannot use.

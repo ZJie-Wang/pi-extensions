@@ -26,10 +26,10 @@ Output Template:
 One or two sentences tied to the requested criteria.
 
 ### Findings
-- Severity — `path:line` — issue, impact, and suggested fix.
+- Severity, `path:line`: issue, impact, and suggested fix.
 
 ### Fix Verification
-- Prior finding — fixed | partially fixed | not fixed — current evidence.
+- Prior finding: fixed | partially fixed | not fixed, with current evidence.
 (Omit for a fresh review.)
 
 ### Verification Gaps

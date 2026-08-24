@@ -24,10 +24,10 @@ Output Template:
 
 ```markdown
 ## Changes made
-- `path` — behavior-level description and why it was needed.
+- `path`: behavior-level description and why it was needed.
 
 ## Verification
-- Command/check — result.
+- Command/check: result.
 
 ## Integration Summary
 Files changed, interfaces or assumptions the main agent must know, and any focused follow-up check.

@@ -313,7 +313,6 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
   const toolRegistry = new ChildToolRegistry(TOOLS_DIR);
   const knownTools = () => new Set([...BUILTIN_TOOLS, ...toolRegistry.names()]);
   const profiles = new ProfileStore(AGENTS_DIR, knownTools());
-  const maxConcurrency = MAX_CONCURRENCY;
   const pendingNotifications = new Set<string>();
   let currentContext: ExtensionContext | undefined;
   let lastStatus: string | undefined;
@@ -349,7 +348,7 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
     onResultConsumed: (threadId: string) =>
       pendingNotifications.delete(threadId),
   };
-  let manager = new ThreadManager(maxConcurrency, callbacks);
+  let manager = new ThreadManager(MAX_CONCURRENCY, callbacks);
 
   const refreshProfiles = (ctx: ExtensionContext): boolean => {
     try {
@@ -629,7 +628,7 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
     lastStatus = undefined;
     pendingNotifications.clear();
     await manager.shutdown();
-    manager = new ThreadManager(maxConcurrency, callbacks);
+    manager = new ThreadManager(MAX_CONCURRENCY, callbacks);
   });
   pi.on("session_shutdown", async (_event, ctx) => {
     if (statusTimer) clearTimeout(statusTimer);

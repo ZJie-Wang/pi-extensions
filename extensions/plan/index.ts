@@ -129,9 +129,7 @@ function displayPath(cwd: string, absolutePath: string): string {
   return rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : absolutePath;
 }
 
-function openCommandForPath(
-  path: string,
-): { command: string; args: string[] } | undefined {
+function openCommandForPath(path: string): { command: string; args: string[] } {
   if (process.platform === "darwin") return { command: "open", args: [path] };
   if (process.platform === "win32")
     return { command: "cmd", args: ["/c", "start", "", path] };
@@ -603,11 +601,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     if (!ctx.hasUI || process.env.PI_PLAN_NO_OPEN === "1")
       return { opened: false };
     const command = openCommandForPath(absolutePath);
-    if (!command)
-      return {
-        opened: false,
-        openError: "No open command available for this platform.",
-      };
     try {
       const result = await pi.exec(command.command, command.args, {
         signal,

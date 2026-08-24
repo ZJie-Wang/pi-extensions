@@ -19,7 +19,13 @@ for (const [program, args] of allowed) {
 }
 
 test("executes date and returns its output", async () => {
-  const result = await createWebTool(process.cwd()).execute("test", { program: "date", args: [] });
+  const result = await createWebTool(process.cwd()).execute(
+    "test",
+    { program: "date", args: [] },
+    undefined,
+    undefined,
+    {} as never,
+  );
   assert.ok(result.content[0]?.type === "text" && result.content[0].text.trim());
   assert.equal(result.details?.program, "date");
   assert.equal(result.details?.exitCode, 0);

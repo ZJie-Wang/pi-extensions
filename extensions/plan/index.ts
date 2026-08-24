@@ -22,6 +22,10 @@ import { Type } from "typebox";
 import { loadToolAllowlist } from "./lib/tool-allowlist.ts";
 import { writePlanMarkdownFile } from "./lib/plan-file.ts";
 import {
+  createPlanLifecycle,
+  type PlanLifecycleResult,
+} from "./lib/plan-lifecycle.ts";
+import {
   containsPlanHeader,
   extractPlanItems,
   getUnsafeCommandReason,
@@ -47,12 +51,6 @@ const DEFAULT_BUILD_TOOLS = [
   "ls",
 ];
 
-interface PlanState {
-  planModeEnabled: boolean;
-  previousTools?: string[];
-  lastPlanPath?: string;
-}
-
 interface PlanToolDetails {
   path: string;
   absolutePath: string;
@@ -66,14 +64,6 @@ const PresentPlanParams = Type.Object({
       "The full plan in markdown. Include headings, numbered steps, notes, etc. as you see fit.",
   }),
 });
-
-function unique(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))];
-}
-
-function normalToolNames(values: string[]): string[] {
-  return unique(values).filter((name) => !PLAN_ONLY_TOOLS.has(name));
-}
 
 function isAssistantMessage(
   message: AgentMessage,
@@ -97,20 +87,6 @@ function textFromContent(content: unknown): string {
 
 function getTextContent(message: AssistantMessage): string {
   return textFromContent(message.content);
-}
-
-function readState(data: unknown): PlanState | undefined {
-  if (!data || typeof data !== "object") return undefined;
-  const record = data as Partial<PlanState>;
-  return {
-    planModeEnabled: record.planModeEnabled === true,
-    ...(Array.isArray(record.previousTools)
-      ? { previousTools: normalToolNames(record.previousTools) }
-      : {}),
-    ...(typeof record.lastPlanPath === "string"
-      ? { lastPlanPath: record.lastPlanPath }
-      : {}),
-  };
 }
 
 function loadMarkdownPrompt(
@@ -362,9 +338,11 @@ async function chooseDialog<T extends string>(
 }
 
 export default function planModeExtension(pi: ExtensionAPI): void {
-  let planModeEnabled = false;
-  let previousTools: string[] | undefined;
-  let lastPlanPath: string | undefined;
+  const lifecycle = createPlanLifecycle({
+    planTools: PLAN_TOOL_ALLOWLIST,
+    planOnlyTools: [...PLAN_ONLY_TOOLS],
+    defaultBuildTools: DEFAULT_BUILD_TOOLS,
+  });
   let lastPersistedState = "";
 
   type ImplementationHandoff =
@@ -392,70 +370,44 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     default: false,
   });
 
-  function snapshot(): PlanState {
-    return {
-      planModeEnabled,
-      ...(previousTools !== undefined
-        ? { previousTools: normalToolNames(previousTools) }
-        : {}),
-      ...(lastPlanPath !== undefined ? { lastPlanPath } : {}),
-    };
-  }
-
-  function persistState(): void {
-    const serialized = JSON.stringify(snapshot());
-    if (serialized === lastPersistedState) return;
-    lastPersistedState = serialized;
-    pi.appendEntry(STATE_ENTRY_TYPE, snapshot());
-  }
-
-  function availableToolNames(): Set<string> {
-    return new Set(pi.getAllTools().map((tool) => tool.name));
-  }
-
-  function setActiveToolsFiltered(names: string[]): void {
-    const available = availableToolNames();
-    pi.setActiveTools(unique(names).filter((name) => available.has(name)));
+  function availableToolNames(): string[] {
+    return pi.getAllTools().map((tool) => tool.name);
   }
 
   function planToolNames(): string[] {
-    const available = availableToolNames();
+    const available = new Set(availableToolNames());
     return PLAN_TOOL_ALLOWLIST.filter((name) => available.has(name));
   }
 
-  function unavailablePlanToolNames(): string[] {
-    const available = availableToolNames();
-    return PLAN_TOOL_ALLOWLIST.filter((name) => !available.has(name));
-  }
-
-  function captureBuildTools(): string[] {
-    return normalToolNames(pi.getActiveTools());
-  }
-
-  function applyPlanTools(ctx: ExtensionContext): void {
-    setActiveToolsFiltered(planToolNames());
-    const unavailable = unavailablePlanToolNames();
-    if (ctx.hasUI && unavailable.length > 0) {
+  function applyToolEffects(
+    result: PlanLifecycleResult,
+    ctx: ExtensionContext,
+  ): void {
+    if (result.activeTools) pi.setActiveTools(result.activeTools);
+    if (ctx.hasUI && result.unavailablePlanTools?.length) {
       ctx.ui.notify(
-        `Plan mode ignored unavailable configured tools: ${unavailable.join(", ")}`,
+        `Plan mode ignored unavailable configured tools: ${result.unavailablePlanTools.join(", ")}`,
         "warning",
       );
     }
   }
 
-  function restoreBuildTools(): void {
-    // previousTools is captured at entry; the default only fires on corrupted
-    // state, where a standard build set is safer than plan-restricted tools.
-    const restore = previousTools ?? DEFAULT_BUILD_TOOLS;
-    setActiveToolsFiltered(normalToolNames(restore));
-    previousTools = undefined;
+  function persist(result: PlanLifecycleResult): void {
+    if (!result.persist) return;
+    const serialized = JSON.stringify(result.persist);
+    if (serialized === lastPersistedState) return;
+    pi.appendEntry(STATE_ENTRY_TYPE, result.persist);
+    lastPersistedState = serialized;
   }
 
-  function removePlanOnlyTools(): void {
-    const active = pi.getActiveTools();
-    if (!planModeEnabled && active.some((name) => PLAN_ONLY_TOOLS.has(name))) {
-      setActiveToolsFiltered(normalToolNames(active));
+  function persistedPlanStates(ctx: ExtensionContext): unknown[] {
+    const states: unknown[] = [];
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (entry.type === "custom" && entry.customType === STATE_ENTRY_TYPE) {
+        states.push(entry.data);
+      }
     }
+    return states;
   }
 
   function cancelImplementationHandoff(): void {
@@ -481,7 +433,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   function updateUI(ctx: ExtensionContext): void {
     if (!ctx.hasUI) return;
 
-    if (!planModeEnabled) {
+    if (!lifecycle.state.planModeEnabled) {
       ctx.ui.setWidget(WIDGET_KEY, undefined);
       return;
     }
@@ -501,11 +453,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
   function enterPlanMode(ctx: ExtensionContext, notify = true): void {
     cancelImplementationHandoff();
-    if (!planModeEnabled) previousTools = captureBuildTools();
-    planModeEnabled = true;
-    applyPlanTools(ctx);
+    const result = lifecycle.dispatch({
+      type: "enter",
+      activeTools: pi.getActiveTools(),
+      availableTools: availableToolNames(),
+    });
+    applyToolEffects(result, ctx);
     updateUI(ctx);
-    persistState();
+    persist(result);
     if (notify && ctx.hasUI)
       ctx.ui.notify(
         `Plan mode enabled. Plans are written to ${PLAN_FILE_NAME}.`,
@@ -515,21 +470,26 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 
   function leavePlanMode(ctx: ExtensionContext, notify = true): void {
     closePlanDialog();
-    planModeEnabled = false;
-    restoreBuildTools();
+    const result = lifecycle.dispatch({
+      type: "leave",
+      availableTools: availableToolNames(),
+    });
+    applyToolEffects(result, ctx);
     updateUI(ctx);
-    persistState();
+    persist(result);
     if (notify && ctx.hasUI) ctx.ui.notify("Build mode restored.", "info");
   }
 
   function clearPlanState(ctx: ExtensionContext, notify = true): void {
-    planModeEnabled = false;
-    lastPlanPath = undefined;
+    const result = lifecycle.dispatch({
+      type: "clear",
+      availableTools: availableToolNames(),
+    });
     cancelImplementationHandoff();
     closePlanDialog();
-    restoreBuildTools();
+    applyToolEffects(result, ctx);
     updateUI(ctx);
-    persistState();
+    persist(result);
     if (notify && ctx.hasUI) ctx.ui.notify("Plan mode state cleared.", "info");
   }
 
@@ -538,36 +498,15 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     forcePlanFlag = false,
   ): void {
     cancelImplementationHandoff();
-
-    const oldPreviousTools = previousTools;
-    planModeEnabled = false;
-    previousTools = undefined;
-    lastPlanPath = undefined;
-
-    for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type !== "custom" || entry.customType !== STATE_ENTRY_TYPE)
-        continue;
-      const state = readState(entry.data);
-      if (!state) continue;
-      planModeEnabled = state.planModeEnabled;
-      previousTools = state.previousTools;
-      lastPlanPath = state.lastPlanPath;
-    }
-
-    if (forcePlanFlag) {
-      if (!planModeEnabled)
-        previousTools = oldPreviousTools ?? captureBuildTools();
-      planModeEnabled = true;
-    }
-
-    if (planModeEnabled) {
-      previousTools = previousTools ?? oldPreviousTools ?? captureBuildTools();
-      applyPlanTools(ctx);
-    } else {
-      removePlanOnlyTools();
-    }
-
-    lastPersistedState = JSON.stringify(snapshot());
+    const result = lifecycle.dispatch({
+      type: "reconstruct",
+      persistedStates: persistedPlanStates(ctx),
+      activeTools: pi.getActiveTools(),
+      availableTools: availableToolNames(),
+      forcePlan: forcePlanFlag,
+    });
+    applyToolEffects(result, ctx);
+    lastPersistedState = JSON.stringify(result.state);
     updateUI(ctx);
   }
 
@@ -580,8 +519,11 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       writePlanMarkdownFile(absolutePath, planMarkdown),
     );
 
-    lastPlanPath = absolutePath;
-    persistState();
+    const result = lifecycle.dispatch({
+      type: "plan-written",
+      absolutePath,
+    });
+    persist(result);
     updateUI(ctx);
 
     return {
@@ -623,7 +565,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   }
 
   async function openLastPlan(ctx: ExtensionContext): Promise<void> {
-    const absolutePath = lastPlanPath ?? resolve(ctx.cwd, PLAN_FILE_NAME);
+    const absolutePath =
+      lifecycle.state.lastPlanPath ?? resolve(ctx.cwd, PLAN_FILE_NAME);
     const result = await openPlanPath(absolutePath, ctx);
     if (ctx.hasUI) {
       if (result.opened)
@@ -734,9 +677,10 @@ export default function planModeExtension(pi: ExtensionAPI): void {
       return;
     }
     if (action === "status") {
-      const status = planModeEnabled ? "planning" : "normal mode";
-      const file = lastPlanPath
-        ? displayPath(ctx.cwd, lastPlanPath)
+      const state = lifecycle.state;
+      const status = state.planModeEnabled ? "planning" : "normal mode";
+      const file = state.lastPlanPath
+        ? displayPath(ctx.cwd, state.lastPlanPath)
         : PLAN_FILE_NAME;
       if (ctx.hasUI)
         ctx.ui.notify(
@@ -745,7 +689,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
         );
       return;
     }
-    if (planModeEnabled) leavePlanMode(ctx);
+    if (lifecycle.state.planModeEnabled) leavePlanMode(ctx);
     else enterPlanMode(ctx);
   }
 
@@ -755,7 +699,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
     description: `Write a structured implementation plan to ${PLAN_FILE_NAME} and open it immediately. Only available in plan mode.`,
     parameters: PresentPlanParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      if (!planModeEnabled) {
+      if (!lifecycle.state.planModeEnabled) {
         return {
           content: [
             {
@@ -830,7 +774,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   pi.registerShortcut(Key.ctrlAlt("p"), {
     description: "Toggle plan mode",
     handler: async (ctx) => {
-      if (planModeEnabled) leavePlanMode(ctx);
+      if (lifecycle.state.planModeEnabled) leavePlanMode(ctx);
       else enterPlanMode(ctx);
     },
   });
@@ -930,7 +874,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_call", async (event) => {
-    if (!planModeEnabled) return;
+    if (!lifecycle.state.planModeEnabled) return;
 
     if (isToolCallEventType("bash", event)) {
       const reason = getUnsafeCommandReason(event.input.command);
@@ -944,7 +888,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("user_bash", (event) => {
-    if (!planModeEnabled) return;
+    if (!lifecycle.state.planModeEnabled) return;
     const reason = getUnsafeCommandReason(event.command);
     if (!reason) return;
     return {
@@ -958,7 +902,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (event) => {
-    if (!planModeEnabled) return;
+    if (!lifecycle.state.planModeEnabled) return;
     const activeTools = planToolNames().join(", ") || "none";
     return {
       systemPrompt: `${event.systemPrompt}\n\n${loadMarkdownPrompt(
@@ -972,7 +916,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("agent_end", async (event, ctx) => {
-    if (!ctx.hasUI || !planModeEnabled) return;
+    if (!ctx.hasUI || !lifecycle.state.planModeEnabled) return;
 
     const lastAssistant = [...event.messages]
       .reverse()

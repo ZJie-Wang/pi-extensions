@@ -29,7 +29,7 @@ test("safe read-only commands are allowed", () => {
 });
 
 test("mutating and unsafe commands are blocked with a reason", () => {
-	const cases: Array<[string, RegExp]> = [
+	const cases: Array<[string, RegExp | undefined]> = [
 		["rm -rf build", /rm is not allowed/],
 		["mkdir new-dir", /mkdir is not allowed/],
 		["git commit -m x", /not allowlisted/],

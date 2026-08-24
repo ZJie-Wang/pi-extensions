@@ -6,7 +6,11 @@
     "extensions/*"
   ],
   "scripts": {
-    "test": "node --test extensions/plan/test/*.test.ts extensions/subagents/test/*.test.ts"
+    "test": "node --test extensions/*/test/*.test.ts",
+    "typecheck": "tsc",
+    "smoke": "pi --no-extensions -e ./extensions/plan/index.ts --help > /dev/null",
+    "pack:check": "npm pack --dry-run --workspaces --json > /dev/null",
+    "check": "npm run typecheck && npm test && npm run smoke && npm run pack:check"
   },
   "pi": {
     "extensions": [
@@ -15,5 +19,9 @@
       "./extensions/subagents/index.ts",
       "./extensions/todo/index.ts"
     ]
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.9.3"
   }
 }

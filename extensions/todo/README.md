@@ -40,7 +40,7 @@ It is reconstructed from past tool results, so it survives restarts and stays vi
         "items": { "type": "integer", "minimum": 1 },
         "minItems": 1,
         "uniqueItems": true,
-        "description": "IDs completed; required for update. If the active phase is completed, the next pending phase becomes active automatically."
+        "description": "IDs completed. Update requires completedIds or activeId. Completing the active phase activates the next pending phase."
       },
       "activeId": {
         "type": "integer",
@@ -78,7 +78,3 @@ There is also a `/todos` command to show or clear the tracker from the prompt li
 ```bash
 pi install npm:@zjie-wang/pi-todo
 ```
-
-## Source
-
-Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. This extension works individually, but it is worth reviewing the collection README — it covers the design notes and the other extensions.

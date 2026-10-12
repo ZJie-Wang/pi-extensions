@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentSession, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionAPI, ExtensionContext, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
   createAgentSession,
   DefaultResourceLoader,
@@ -9,9 +10,9 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { Model } from "@earendil-works/pi-ai/compat";
+import type { AssistantMessage, Model } from "@earendil-works/pi-ai/compat";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { addUsage, BUILTIN_TOOLS, type AgentProfile, capOutput, emptyUsage, preview, toolArgsPreview, type RunOutcome } from "./core.ts";
+import { addUsage, BUILTIN_TOOLS, capOutput, emptyUsage, type AgentProfile, preview, toolArgsPreview, type RunOutcome } from "./core.ts";
 import type { ChildSession, ToolActivity } from "./manager.ts";
 import type { ChildToolRegistry } from "./tool-loader.ts";
 
@@ -21,6 +22,17 @@ export interface ParentSnapshot {
   thinkingLevel?: ThinkingLevel;
   modelRegistry: ExtensionContext["modelRegistry"];
   scopedModels: ExtensionContext["scopedModels"];
+  settings: ReturnType<ExtensionAPI["getSettings"]>;
+  projectTrusted: boolean;
+}
+
+function parentModelRuntime(registry: ParentSnapshot["modelRegistry"]): ModelRuntime {
+  // Pi exposes this runtime through ModelRegistry internally, but has no public getter yet.
+  const runtime = (registry as unknown as { runtime?: ModelRuntime }).runtime;
+  if (!runtime || typeof runtime.streamSimple !== "function") {
+    throw new Error("This Pi version does not expose the parent model runtime required by subagents");
+  }
+  return runtime;
 }
 
 function resolveModel(profile: AgentProfile, parent: ParentSnapshot): Model<any> | undefined {
@@ -38,48 +50,42 @@ function resolveModel(profile: AgentProfile, parent: ParentSnapshot): Model<any>
   return matches[0];
 }
 
-function assistantText(message: any): string {
-  if (message?.role !== "assistant" || !Array.isArray(message.content)) return "";
-  return message.content.filter((part: any) => part.type === "text").map((part: any) => part.text).join("\n").trim();
+function assistantText(message: AssistantMessage | undefined): string {
+  return message?.content.filter((part) => part.type === "text").map((part) => part.text).join("\n").trim() ?? "";
 }
 
-function finalAssistant(messages: readonly any[], startIndex: number): any | undefined {
-  for (let index = messages.length - 1; index >= startIndex; index--) {
-    if (messages[index]?.role === "assistant") return messages[index];
-  }
-  return undefined;
-}
-
-function messagePreview(message: any): string {
+function messagePreview(message: AssistantMessage): string {
   const text = assistantText(message);
   return preview(text.split("\n").filter((line) => line.trim() && !line.trimStart().startsWith("```")).slice(0, 3).join(" "), 300);
 }
 
-class PiChildSession implements ChildSession {
-  private readonly session: AgentSession;
+export class PiChildSession implements ChildSession {
+  constructor(private readonly session: AgentSession) {}
 
-  constructor(session: AgentSession) {
-    this.session = session;
-  }
-
-  async run(prompt: string, onUpdate: Parameters<ChildSession["run"]>[1]): Promise<RunOutcome> {
+  async run(prompt: string, onUpdate: Parameters<ChildSession["run"]>[1], signal: AbortSignal): Promise<RunOutcome> {
     const startedAt = Date.now();
-    const startIndex = this.session.messages.length;
-    const usage = emptyUsage();
+    const startEntryCount = this.session.sessionManager.getEntryCount();
+    let message: AssistantMessage | undefined;
+    const checkCancelled = () => signal.throwIfAborted();
+    const abort = () => { void this.session.abort().catch(() => {}); };
+    signal.addEventListener("abort", abort, { once: true });
     const tools: ToolActivity[] = [];
     let toolCount = 0;
     const emitTools = (activity?: string) => onUpdate({ activity, tools: tools.map((tool) => ({ ...tool })), toolCount });
     const unsubscribe = this.session.subscribe((event) => {
+      // Preflight may create this controller after an earlier abort attempt.
+      if (event.type === "compaction_start" && signal.aborted) this.session.abortCompaction();
       if (event.type === "tool_execution_start") {
         toolCount++;
+        const args = toolArgsPreview(event.toolName, event.args);
         tools.push({
           toolCallId: event.toolCallId,
           tool: event.toolName,
-          args: toolArgsPreview(event.toolName, event.args),
+          args,
           status: "running",
         });
-        while (tools.length > 20) tools.shift();
-        emitTools(`${event.toolName} · ${toolArgsPreview(event.toolName, event.args)}`);
+        if (tools.length > 20) tools.shift();
+        emitTools(`${event.toolName} · ${args}`);
       }
       if (event.type === "tool_execution_end") {
         const tool = tools.find((entry) => entry.toolCallId === event.toolCallId);
@@ -87,25 +93,51 @@ class PiChildSession implements ChildSession {
         emitTools(event.isError ? `${event.toolName} failed` : `${event.toolName} done`);
       }
       if (event.type === "message_end" && event.message.role === "assistant") {
-        addUsage(usage, (event.message as any).usage);
-        onUpdate({ usage, lastMessage: messagePreview(event.message) });
+        message = event.message;
+        onUpdate({ lastMessage: messagePreview(message) });
       }
     });
 
     let thrown: unknown;
     try {
-      await this.session.prompt(prompt, { expandPromptTemplates: false, source: "extension" });
+      checkCancelled();
+      await this.session.prompt(prompt, {
+        expandPromptTemplates: false,
+        source: "extension",
+        preflightResult: checkCancelled,
+      });
     } catch (error) {
       thrown = error;
     } finally {
+      signal.removeEventListener("abort", abort);
       unsubscribe();
     }
 
-    const message = finalAssistant(this.session.messages, startIndex);
-    const output = capOutput(assistantText(message));
+    // Raw entries remain append-only when compaction rebuilds the message array.
+    const usage = emptyUsage();
+    for (const entry of this.session.sessionManager.getEntries().slice(startEntryCount)) {
+      if (entry.type === "message" && (entry.message.role === "assistant" || entry.message.role === "toolResult")) {
+        if (entry.message.usage) addUsage(usage, entry.message.usage, entry.message.role === "assistant" ? 1 : 0);
+      } else if ((entry.type === "usage" || entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
+        addUsage(usage, entry.usage, 0);
+      }
+    }
+    const fullOutput = assistantText(message);
+    let fullOutputPath: string | undefined;
+    let output = capOutput(fullOutput);
+    if (output !== fullOutput) {
+      try {
+        const directory = await mkdtemp(path.join(os.tmpdir(), "pi-subagent-"));
+        fullOutputPath = path.join(directory, "output.txt");
+        await writeFile(fullOutputPath, fullOutput, { encoding: "utf8", mode: 0o600 });
+        output = capOutput(fullOutput, fullOutputPath);
+      } catch {
+        fullOutputPath = undefined;
+      }
+    }
     const stopReason = message?.stopReason;
-    const error = thrown instanceof Error ? thrown.message : thrown ? String(thrown) : message?.errorMessage;
-    const status = stopReason === "aborted"
+    const error = signal.aborted ? "Subagent stopped" : thrown instanceof Error ? thrown.message : thrown ? String(thrown) : message?.errorMessage;
+    const status = signal.aborted || stopReason === "aborted"
       ? "aborted"
       : error || stopReason === "error" || stopReason === "length" || !output
         ? "failed"
@@ -113,6 +145,7 @@ class PiChildSession implements ChildSession {
     return {
       status,
       output,
+      fullOutputPath,
       error: error ?? (stopReason === "length" ? "Subagent reached the model output limit" : !output ? "Subagent returned no final text" : undefined),
       usage,
       startedAt,
@@ -120,12 +153,8 @@ class PiChildSession implements ChildSession {
     };
   }
 
-  steer(message: string): Promise<void> {
-    return this.session.steer(message);
-  }
-
-  abort(): Promise<void> {
-    return this.session.abort();
+  async steer(message: string): Promise<void> {
+    await this.session.steer(message, undefined, { source: "extension" });
   }
 
   dispose(): void {
@@ -133,13 +162,15 @@ class PiChildSession implements ChildSession {
   }
 }
 
-export function snapshotParent(ctx: ExtensionContext): ParentSnapshot {
+export function snapshotParent(ctx: ExtensionContext, settings: ParentSnapshot["settings"]): ParentSnapshot {
   return {
     cwd: ctx.cwd,
     model: ctx.model,
     thinkingLevel: ctx.thinkingLevel,
     modelRegistry: ctx.modelRegistry,
     scopedModels: ctx.scopedModels,
+    settings: structuredClone(settings),
+    projectTrusted: ctx.isProjectTrusted(),
   };
 }
 
@@ -162,24 +193,31 @@ export async function createChildSession(
   toolRegistry: ChildToolRegistry,
 ): Promise<ChildSession> {
   const agentDir = getAgentDir();
+  const modelRuntime = parentModelRuntime(parent.modelRegistry);
+  const settingsManager = SettingsManager.inMemory(
+    { ...parent.settings, cacheWarming: "off" },
+    { projectTrusted: parent.projectTrusted },
+  );
   const selectedSkills = new Set(profile.skills);
   const explicitSkillPaths = new Map<string, string>();
   for (const skill of selectedSkills) {
     const resolved = resolveSkillPath(skill, profile, parent.cwd, agentDir);
     if (resolved) explicitSkillPaths.set(skill, resolved);
   }
+  const skillPaths = new Set(explicitSkillPaths.values());
   const loader = new DefaultResourceLoader({
     cwd: parent.cwd,
     agentDir,
+    settingsManager,
     noExtensions: true,
     noPromptTemplates: true,
     noThemes: true,
     noContextFiles: !profile.includeProjectContext,
     noSkills: selectedSkills.size === 0,
-    additionalSkillPaths: [...explicitSkillPaths.values()],
+    additionalSkillPaths: [...skillPaths],
     skillsOverride: selectedSkills.size
       ? (base) => ({
-          skills: base.skills.filter((skill) => selectedSkills.has(skill.name) || [...explicitSkillPaths.values()].includes(skill.filePath)),
+          skills: base.skills.filter((skill) => selectedSkills.has(skill.name) || skillPaths.has(skill.filePath)),
           diagnostics: base.diagnostics,
         })
       : undefined,
@@ -199,17 +237,15 @@ export async function createChildSession(
 
   const model = resolveModel(profile, parent);
   if (!model) throw new Error("No model is selected for the subagent");
-  const modelRuntime = (parent.modelRegistry as unknown as { runtime?: any }).runtime;
-  const settingsManager = SettingsManager.create(parent.cwd, agentDir);
   const customToolNames = profile.tools.filter((name) => !BUILTIN_TOOLS.has(name));
-  const customTools: any[] = await toolRegistry.create(customToolNames, parent.cwd);
+  const customTools = await toolRegistry.create(customToolNames, parent.cwd);
   let session: AgentSession | undefined;
   try {
     const result = await createAgentSession({
       cwd: parent.cwd,
       agentDir,
       model,
-      ...(modelRuntime ? { modelRuntime } : {}),
+      modelRuntime,
       thinkingLevel: (profile.thinking as ThinkingLevel | undefined) ?? parent.thinkingLevel,
       scopedModels: parent.scopedModels.map((entry) => ({ ...entry })),
       tools: [...profile.tools],

@@ -14,22 +14,16 @@ The extension registers two tools for the parent agent.
 
 ### `subagent_run`
 
-Start a named thread by providing a profile:
+Start a named thread with `action: "new"` and a profile:
 
 ```json
-{"profile":"researcher","thread":"Dario","prompt":"Investigate why Anthropic banned my account"}
+{"action":"new","profile":"researcher","thread":"Dario","prompt":"Investigate why Anthropic banned my account"}
 ```
 
-Continue the same child conversation by omitting `profile`:
+Continue the same child conversation once it is idle, using `action: "continue"` and omitting `profile`:
 
 ```json
-{"thread":"Dario","prompt":"What is the ToS? Explain more about the reasons you mentioned."}
-```
-
-Run independent work in the background:
-
-```json
-{"profile":"reviewer","thread":"Sam","prompt":"Review the current changes for correctness.","background":true}
+{"action":"continue","thread":"Dario","prompt":"What is the ToS? Explain more about the reasons you mentioned."}
 ```
 
 ### `subagent_control`
@@ -42,9 +36,9 @@ Run independent work in the background:
 ```
 
 - `status` returns immediately and includes the latest result when settled.
-- `wait` joins the current run. Cancelling a wait does not stop background work.
+- `wait` joins the current run. Cancelling a wait leaves the child running.
 - `steer` queues direction after the child’s current tool batch.
-- `stop` removes queued work or aborts a running child.
+- `stop` removes queued work or aborts a running child, keeping the thread.
 
 ## Profiles
 
@@ -76,7 +70,26 @@ Profile instructions...
 | `preserveBaseInstruction` | Append profile instructions to Pi’s base prompt when true; replace it when false |
 | `includeProjectContext` | Load `AGENTS.md` and other project context files when true; exclude them when false |
 
-Profiles are checked before parent turns and launches. Valid edits affect new threads without `/reload`; existing threads keep their snapshot. Child sessions load no extensions, cannot nest subagents, and receive both a strict SDK allowlist and a call-time tool guard.
+Profiles are checked before parent turns and launches. Valid edits affect new threads without `/reload`; existing threads keep their snapshot.
+
+### Parent-model overrides
+
+Use `~/.pi/agent/subagents.json` to override a profile's model or thinking level for a matching parent model.
+
+```json
+{
+  "parentModels": {
+    "provider/model-a": {
+      "worker": { "model": "provider/model-b", "thinking": "high" }
+    },
+    "provider/model-c": {
+      "worker": { "model": "provider/model-d" }
+    }
+  }
+}
+```
+
+Parent selectors match exact `provider/model` or model IDs; a qualified selector takes precedence for the whole rule. Unmatched parents or profiles use the profile frontmatter. Omitted fields keep their profile values; `"inherit"` uses the parent's value.
 
 ## Child tool modules
 
@@ -104,7 +117,7 @@ export default function createTool(cwd: string): ToolDefinition {
 }
 ```
 
-Add `example` to a profile’s `tools` list to expose it to new threads using that profile. Modules are discovered by filename and imported only when requested by a new thread. The factory’s returned tool name must match its filename.
+Add `example` to a profile’s `tools` list to expose it to new threads using that profile. Modules are discovered by filename and imported when requested by a new thread.
 
 ## Out-of-the-box agents
 
@@ -115,7 +128,7 @@ Add `example` to a profile’s `tools` list to expose it to new threads using th
 | `researcher` | `web` | System date and guarded Tavily/curl retrieval |
 | `worker` | `read`, `grep`, `find`, `ls`, `write`, `edit`, `bash` | Scoped implementation |
 
-Read-only means the child is not given mutation tools. This is a Pi capability boundary, not an operating-system sandbox.
+Read-only means the child is not given mutation tools. This is a capability boundary, not an operating-system sandbox.
 
 ## What the model sees
 
@@ -129,28 +142,30 @@ Read-only means the child is not given mutation tools. This is a Pi capability b
   "description": "Start or continue a named thread with an isolated child pi agent.",
   "parameters": {
     "type": "object",
-    "required": ["thread", "prompt"],
+    "additionalProperties": false,
+    "required": ["action", "thread", "prompt"],
     "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["new", "continue"],
+        "description": "Create a new thread or send another task to an idle thread."
+      },
       "profile": {
         "type": "string",
         "enum": ["researcher", "reviewer", "scout", "worker"],
-        "description": "Profile for the named child. Include a profile to start a new thread; omit it when continuing an existing one. Available: ${profiles.describe()}"
+        "description": "Required for new; omit for continue. Available:\n${profiles.describe()}"
       },
       "thread": {
         "type": "string",
-        "description": "Human-readable thread name, like Tom, Jerry, overengineering_hunter, etc.",
+        "description": "Unique and human-readable name, like Tom, Jerry, slop_hunter, etc.",
         "minLength": 1,
-        "maxLength": 32
+        "maxLength": 32,
+        "pattern": "^[A-Za-z][A-Za-z0-9 _-]{0,31}$"
       },
       "prompt": {
         "type": "string",
         "description": "Natural-language message for the child.",
         "minLength": 1
-      },
-      "background": {
-        "type": "boolean",
-        "description": "Run independently and notify the parent on completion. Default: false.",
-        "default": false
       }
     }
   }
@@ -161,15 +176,12 @@ Read-only means the child is not given mutation tools. This is a Pi capability b
 
 ```
 Available tools:
-- subagent_run: Start or continue substantial independent work in named subagent threads
+- subagent_run: Schedule substantial independent work in named subagent threads
 
 Guidelines:
-- Use subagents for tasks that benefit from specialized focus, parallel execution, or keeping noisy exploration out of the main context. Avoid overuse; direct tools are enough for simple I/O and small tasks.
-- Give each new subagent thread a short memorable name and a self-contained initial prompt; continue that thread when its prior context matters.
-- Default to foreground subagent_run calls. Use background only to work in parallel with subagents. Do not poll; wait while blocked on the result.
+- Use subagents for tasks that benefit from specialized focus, parallel execution, or keeping noisy exploration out of the main context. Skip them for simple I/O or small tasks.
+- New subagent threads start without the parent's transcript. Provide a self-contained initial prompt with the context the child needs. Continue an existing thread when its prior context matters. Keep work in the parent when passing the necessary context would be cumbersome.
 ```
-
-The `profile` enum is generated from the markdown files in [`agents/`](./agents), so it always matches the profiles that actually exist. And a child's own context is lean too: each profile gets exactly the tools it lists — `scout` only `read`/`grep`/`find`/`ls`, for instance — so nothing is injected that a child cannot use.
 
 ### `subagent_control`
 
@@ -181,18 +193,20 @@ The `profile` enum is generated from the markdown files in [`agents/`](./agents)
   "description": "Inspect, join, redirect, or stop an existing named subagent thread.",
   "parameters": {
     "type": "object",
+    "additionalProperties": false,
     "required": ["thread", "action"],
     "properties": {
       "thread": {
         "type": "string",
-        "description": "Human-readable thread name used by subagent_run",
+        "description": "Existing thread name; case-insensitive.",
         "minLength": 1,
-        "maxLength": 32
+        "maxLength": 32,
+        "pattern": "^[A-Za-z][A-Za-z0-9 _-]{0,31}$"
       },
       "action": {
         "type": "string",
         "enum": ["status", "wait", "steer", "stop"],
-        "description": "status is non-blocking; wait joins; steer redirects; stop aborts"
+        "description": "status returns state; wait joins the child; steer injects message; stop aborts the thread"
       },
       "message": {
         "type": "string",
@@ -208,21 +222,11 @@ The `profile` enum is generated from the markdown files in [`agents/`](./agents)
 
 ```
 Available tools:
-- subagent_control: Control existing subagent threads
+- subagent_control: Interact with existing subagent threads
 ```
 
 No guidelines for this one — the schema's `action` enum is the whole story.
 
 ## Note
 
-This subagent extension is definitely not the most powerful one compared with what you can find from the community. However, all design decisions are made deliberately to keep it lean and light, while being as useful as possible.
-
-Also, I have to say that, although subagents have become one of the "standards" for agent harnesses, it's worth reflecting on whether they actually live up to the hype they got — do they really improve how our agents work in terms of quality and efficiency? I believe for many users, a working experience **without** any subagents or similar features actually feels much smoother, especially regarding that many "frontier" models nowadays, like `gpt-5.6-sol`, really overuse subagents so much when not necessary.
-
-I'm not trying to doubt the value subagents add to our workflow - they are indeed powerful, and can be very helpful when used properly. The question worth asking is: how we can ensure they are used deliberately and intentionally, and how we can ensure everything is still in control when a number of child agents are running wild on our machines.
-
-I cannot say this extension solves the problems, but at least it was built with these considerations in mind.
-
-## Source
-
-Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. This extension works individually, but it is worth reviewing the collection README — it covers the design notes and the other extensions.
+This subagent extension is definitely not the most powerful one compared with what you can find from the community. However, all design decisions are made deliberately to keep it lean and light (relatively), while being as useful as possible.

@@ -9,7 +9,7 @@ import {
   matchesKey,
   Text,
   truncateToWidth,
-  visibleWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
 
@@ -18,13 +18,6 @@ const CUSTOM_LABEL = "✎ Type something.";
 const MULTI_COMMIT_LABEL = "✓ Submit selections";
 const SUBMIT_LABEL = "✓ Submit answers";
 const CANCEL_LABEL = "✕ Cancel";
-const MAX_QUESTIONS = 4;
-const MIN_OPTIONS = 2;
-const MAX_OPTIONS = 4;
-const MAX_QUESTION_CHARS = 1000;
-const MAX_HEADER_CHARS = 16;
-const MAX_LABEL_CHARS = 60;
-const MAX_DESCRIPTION_CHARS = 300;
 const RESERVED_LABELS = new Set([
   "other",
   "type something.",
@@ -33,38 +26,36 @@ const RESERVED_LABELS = new Set([
 
 const OptionSchema = Type.Object({
   label: Type.String({
-    maxLength: MAX_LABEL_CHARS,
-    description: `Short option label (1-5 words). MAX ${MAX_LABEL_CHARS} CHARACTERS.`,
+    maxLength: 60,
+    description: "Short option label (1-5 words).",
   }),
-  description: Type.String({
-    maxLength: MAX_DESCRIPTION_CHARS,
-    description:
-      "What this option means or implies: trade-offs, consequences, etc.",
-  }),
+  description: Type.Optional(
+    Type.String({
+      maxLength: 300,
+      description:
+        "What this option means or implies: trade-offs, consequences, etc.",
+    }),
+  ),
 });
 
 const QuestionSchema = Type.Object({
   question: Type.String({
-    maxLength: MAX_QUESTION_CHARS,
+    maxLength: 1000,
     description:
       "The complete question. Clear, specific, ends with a question mark.",
   }),
-  header: Type.String({
-    maxLength: MAX_HEADER_CHARS,
-    description: `Short chip labeling this question in the dialog, e.g. "Approach", "Library". MAX ${MAX_HEADER_CHARS} CHARACTERS.`,
-  }),
   options: Type.Optional(
     Type.Array(OptionSchema, {
-      minItems: MIN_OPTIONS,
-      maxItems: MAX_OPTIONS,
-      description: `${MIN_OPTIONS}-${MAX_OPTIONS} distinct options that are mutually exclusive unless multiSelect, with the recommended option first. A free-text row is added automatically; do not author one. Omit options for a free-text question.`,
+      minItems: 2,
+      maxItems: 4,
+      description: "2-4 distinct options, with the recommended one first. Omit options for a free-text question.",
     }),
   ),
   multiSelect: Type.Optional(
     Type.Boolean({
       default: false,
       description:
-        "Allow selecting multiple options. Use when options are not mutually exclusive. Defaults false.",
+        "Allow selecting multiple options. Use when options are not mutually exclusive.",
     }),
   ),
 });
@@ -72,24 +63,12 @@ const QuestionSchema = Type.Object({
 const AskUserParams = Type.Object({
   questions: Type.Array(QuestionSchema, {
     minItems: 1,
-    maxItems: MAX_QUESTIONS,
+    maxItems: 4,
     description: "Question(s) to ask.",
   }),
 });
 
 type AskUserParamsInput = Static<typeof AskUserParams>;
-
-interface OptionData {
-  label: string;
-  description?: string;
-}
-
-interface QuestionData {
-  question: string;
-  header?: string;
-  options?: OptionData[];
-  multiSelect?: boolean;
-}
 
 interface NormalOption {
   label: string;
@@ -98,128 +77,55 @@ interface NormalOption {
 
 interface NormalQuestion {
   question: string;
-  header: string;
   options: NormalOption[];
   multiSelect: boolean;
 }
 
-type AnswerSource = "choice" | "text" | "multi";
-type AskUserError =
-  | "ui_unavailable"
-  | "aborted"
-  | "no_questions"
-  | "too_many_questions"
-  | "empty_question"
-  | "invalid_options"
-  | "duplicate_question"
-  | "duplicate_option"
-  | "reserved_label";
+const QuestionAnswerSchema = Type.Object({
+  questionIndex: Type.Integer({ minimum: 0 }),
+  question: Type.String(),
+  answer: Type.Union([Type.String(), Type.Array(Type.String()), Type.Null()]),
+  source: Type.Optional(
+    Type.Union([
+      Type.Literal("choice"),
+      Type.Literal("text"),
+      Type.Literal("multi"),
+    ]),
+  ),
+  note: Type.Optional(Type.String()),
+}, { additionalProperties: false });
 
-interface QuestionAnswer {
-  questionIndex: number;
-  question: string;
-  answer: string | string[] | null;
-  source?: AnswerSource;
-  note?: string;
-}
+const AskUserResultSchema = Type.Object({
+  answers: Type.Array(QuestionAnswerSchema),
+  cancelled: Type.Boolean(),
+  error: Type.Optional(
+    Type.Union([
+      Type.Literal("ui_unavailable"),
+      Type.Literal("aborted"),
+      Type.Literal("no_questions"),
+      Type.Literal("too_many_questions"),
+      Type.Literal("empty_question"),
+      Type.Literal("invalid_options"),
+      Type.Literal("duplicate_question"),
+      Type.Literal("duplicate_option"),
+      Type.Literal("reserved_label"),
+    ]),
+  ),
+}, { additionalProperties: false });
 
-interface AskUserResult {
-  answers: QuestionAnswer[];
-  cancelled: boolean;
-  error?: AskUserError;
-}
+type QuestionAnswer = Static<typeof QuestionAnswerSchema>;
+type AnswerSource = NonNullable<QuestionAnswer["source"]>;
+type AskUserResult = Static<typeof AskUserResultSchema>;
+type AskUserError = NonNullable<AskUserResult["error"]>;
 
-function normalizeText(value: unknown): string {
-  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
-}
-
-function readFirstQuestion(
-  raw: Record<string, unknown>,
-): Record<string, unknown> | undefined {
-  const questions = raw.questions;
-  if (
-    !Array.isArray(questions) ||
-    !questions[0] ||
-    typeof questions[0] !== "object"
-  )
-    return undefined;
-  return questions[0] as Record<string, unknown>;
-}
-
-function optionFromUnknown(value: unknown): OptionData | undefined {
-  if (typeof value === "string") {
-    const label = normalizeText(value);
-    return label ? { label } : undefined;
-  }
-  if (!value || typeof value !== "object") return undefined;
-  const record = value as Record<string, unknown>;
-  const label = normalizeText(
-    record.label ?? record.value ?? record.text ?? record.name,
-  );
-  if (!label) return undefined;
-  const description = normalizeText(
-    record.description ?? record.desc ?? record.detail ?? record.details,
-  );
-  return description ? { label, description } : { label };
-}
-
-function normalizeOptions(raw: unknown): OptionData[] {
-  if (!Array.isArray(raw)) return [];
-  const options: OptionData[] = [];
-  for (const item of raw) {
-    const option = optionFromUnknown(item);
-    if (option) options.push(option);
-  }
-  return options;
-}
-
-function questionFromUnknown(value: unknown): QuestionData | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const raw = value as Record<string, unknown>;
-  const question = normalizeText(
-    raw.question ?? raw.q ?? raw.prompt ?? raw.message,
-  );
-  const header = normalizeText(raw.header).slice(0, MAX_HEADER_CHARS);
-  const options = normalizeOptions(raw.options ?? raw.choices);
-  const multiSelect = raw.multiSelect ?? raw.multi_select ?? raw.multi;
-  return {
-    question,
-    ...(header ? { header } : {}),
-    ...(options.length > 0 ? { options } : {}),
-    ...(typeof multiSelect === "boolean" ? { multiSelect } : {}),
-  };
-}
-
-function normalizeQuestions(rawQuestions: unknown): QuestionData[] {
-  if (!Array.isArray(rawQuestions)) return [];
-  return rawQuestions
-    .map(questionFromUnknown)
-    .filter((q): q is QuestionData => !!q);
-}
-
-function toParams(questions: QuestionData[]): AskUserParamsInput {
-  return {
-    questions: questions.map((q) => ({
-      question: q.question,
-      header: q.header ?? "",
-      ...(q.options
-        ? {
-            options: q.options.map((o) => ({
-              label: o.label,
-              description: o.description ?? "",
-            })),
-          }
-        : {}),
-      ...(q.multiSelect !== undefined ? { multiSelect: q.multiSelect } : {}),
-    })),
-  };
+function normalizeText(value = ""): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function normalizeForExecute(input: AskUserParamsInput): NormalQuestion[] {
   return input.questions.map((q) => ({
     question: normalizeText(q.question),
-    header: normalizeText(q.header).slice(0, MAX_HEADER_CHARS),
-    options: normalizeOptions(q.options).map((option) => ({
+    options: (q.options ?? []).map((option) => ({
       label: normalizeText(option.label),
       description: normalizeText(option.description),
     })),
@@ -230,15 +136,12 @@ function normalizeForExecute(input: AskUserParamsInput): NormalQuestion[] {
 function validateQuestions(
   questions: NormalQuestion[],
 ): AskUserError | undefined {
-  if (questions.length === 0) return "no_questions";
-  if (questions.length > MAX_QUESTIONS) return "too_many_questions";
   const seenQuestions = new Set<string>();
   for (const q of questions) {
     if (!q.question) return "empty_question";
     const qKey = q.question.toLowerCase();
     if (seenQuestions.has(qKey)) return "duplicate_question";
     seenQuestions.add(qKey);
-    if (q.options.length === 1) return "invalid_options";
     const seenOptions = new Set<string>();
     for (const option of q.options) {
       if (!option.label) return "invalid_options";
@@ -269,53 +172,12 @@ function buildResult(details: AskUserResult) {
   else if (details.answers.length === 1)
     text = `answer: ${answerText(details.answers[0])}`;
   else text = `answers: ${details.answers.map(compactAnswer).join("; ")}`;
-  return { content: [{ type: "text" as const, text }], details };
-}
-
-function splitToWidth(text: string, maxWidth: number): string[] {
-  const lines: string[] = [];
-  let line = "";
-
-  for (const char of Array.from(text)) {
-    if (line && visibleWidth(`${line}${char}`) > maxWidth) {
-      lines.push(line);
-      line = "";
-    }
-    line += char;
-  }
-
-  if (line) lines.push(line);
-  return lines;
-}
-
-function wrapText(text: string, maxWidth: number): string[] {
-  const width = Math.max(1, maxWidth);
-  const words = text.split(/\s+/).filter(Boolean);
-  if (words.length === 0) return [""];
-
-  const lines: string[] = [];
-  let line = "";
-
-  for (const word of words) {
-    if (visibleWidth(word) > width) {
-      if (line) {
-        lines.push(line);
-        line = "";
-      }
-      lines.push(...splitToWidth(word, width));
-      continue;
-    }
-
-    const next = line ? `${line} ${word}` : word;
-    if (visibleWidth(next) <= width) line = next;
-    else {
-      if (line) lines.push(line);
-      line = word;
-    }
-  }
-
-  if (line) lines.push(line);
-  return lines;
+  return {
+    content: [{ type: "text" as const, text }],
+    details,
+    structuredContent: details,
+    ...(details.error ? { isError: true } : {}),
+  };
 }
 
 interface DialogState {
@@ -344,12 +206,17 @@ function stateSummary(s: DialogState): string | null {
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
-async function runQuestionnaire(
+function runQuestionnaire(
   ctx: ExtensionContext,
   questions: NormalQuestion[],
+  signal: AbortSignal | undefined,
 ): Promise<QuestionAnswer[] | null> {
-  const result = await ctx.ui.custom<QuestionAnswer[] | null>(
+  let cancel: (() => void) | undefined;
+  return ctx.ui.custom<QuestionAnswer[] | null>(
     (tui, theme, _keybindings, done) => {
+      cancel = () => done(null);
+      signal?.addEventListener("abort", cancel, { once: true });
+      if (signal?.aborted) cancel();
       const single = questions.length === 1;
       const SUBMIT_TAB = questions.length;
       const states: DialogState[] = questions.map((q) => ({
@@ -365,6 +232,7 @@ async function runQuestionnaire(
       let submitCursor = 0;
       let editMode: EditMode = null;
       let cachedLines: string[] | undefined;
+      let cacheWidth = -1;
       const editorTheme: EditorTheme = {
         borderColor: (s) => theme.fg("borderMuted", s),
         selectList: {
@@ -412,7 +280,7 @@ async function runQuestionnaire(
             questionIndex: i,
             question: s.q.question,
             answer,
-            source,
+            ...(source ? { source } : {}),
             ...(s.note ? { note: s.note } : {}),
           };
         });
@@ -425,7 +293,7 @@ async function runQuestionnaire(
         const target = states[tab];
         editor.setText(
           target && isTextQuestion(target)
-            ? target.draft || target.customText || ""
+            ? target.draft
             : "",
         );
       }
@@ -483,7 +351,7 @@ async function runQuestionnaire(
         const text = normalizeText(value);
         const mode = editMode;
         editMode = null;
-        editor.setText("");
+        editor.setText(isTextQuestion(s) ? text : "");
         if (mode === "note") {
           s.note = text || null;
           refresh();
@@ -509,26 +377,6 @@ async function runQuestionnaire(
           return;
         }
 
-        if (s && isTextQuestion(s) && !onSubmitTab) {
-          if (matchesKey(data, Key.escape)) {
-            done(null);
-            return;
-          }
-          if (!single && matchesKey(data, Key.tab)) {
-            setTab(tab + 1 <= SUBMIT_TAB ? tab + 1 : 0);
-            refresh();
-            return;
-          }
-          if (!single && matchesKey(data, Key.shift("tab"))) {
-            setTab(tab - 1 >= 0 ? tab - 1 : SUBMIT_TAB);
-            refresh();
-            return;
-          }
-          editor.handleInput(data);
-          refresh();
-          return;
-        }
-
         if (matchesKey(data, Key.escape)) {
           done(null);
           return;
@@ -544,6 +392,12 @@ async function runQuestionnaire(
           refresh();
           return;
         }
+        if (s && isTextQuestion(s)) {
+          editor.handleInput(data);
+          refresh();
+          return;
+        }
+
         if (!single && (matchesKey(data, Key.right) || data === "l")) {
           setTab((tab + 1) % (SUBMIT_TAB + 1));
           refresh();
@@ -662,7 +516,7 @@ async function runQuestionnaire(
       }
 
       function render(width: number): string[] {
-        if (cachedLines) return cachedLines;
+        if (cachedLines && cacheWidth === width) return cachedLines;
         const lines: string[] = [];
         const add = (line = "") => lines.push(truncateToWidth(line, width));
         const contentWidth = Math.max(1, width - 1);
@@ -673,7 +527,7 @@ async function runQuestionnaire(
         if (!single) {
           const chips: string[] = [];
           states.forEach((st, i) => {
-            const label = st.q.header || `Q${i + 1}`;
+            const label = `Q${i + 1}`;
             const answered = isAnswered(st);
             const body =
               i === tab
@@ -694,7 +548,7 @@ async function runQuestionnaire(
           add(theme.bold(theme.fg("text", " Review your answers")));
           lines.push("");
           states.forEach((st, i) => {
-            const head = st.q.header || `Q${i + 1}`;
+            const head = `Q${i + 1}`;
             const summary = stateSummary(st);
             add(
               ` ${theme.fg("muted", head)}  ${
@@ -718,7 +572,7 @@ async function runQuestionnaire(
           });
         } else {
           const s = states[tab];
-          for (const line of wrapText(s.q.question, contentWidth))
+          for (const line of wrapTextWithAnsi(s.q.question, contentWidth))
             add(theme.bold(theme.fg("text", ` ${line}`)));
           if (s.note)
             add(theme.fg("warning", " note: ") + theme.fg("muted", s.note));
@@ -752,7 +606,7 @@ async function runQuestionnaire(
               }
               add(prefix + (focused ? theme.bold(row) : row));
               if (option.description)
-                for (const dl of wrapText(
+                for (const dl of wrapTextWithAnsi(
                   option.description,
                   Math.max(1, contentWidth - 5),
                 ))
@@ -812,26 +666,35 @@ async function runQuestionnaire(
         add(theme.fg("dim", ` ${helpText()}`));
         rule();
         cachedLines = lines;
+        cacheWidth = width;
         return lines;
       }
 
       return {
         render,
         handleInput,
+        get focused() { return editor.focused; },
+        set focused(value: boolean) {
+          editor.focused = value;
+          cachedLines = undefined;
+        },
         invalidate: () => {
           cachedLines = undefined;
+          editor.invalidate();
         },
       };
     },
-  );
-  return result ?? null;
+  ).finally(() => {
+    if (cancel) signal?.removeEventListener("abort", cancel);
+  });
 }
 
 async function askTextQuestionBasic(
   ctx: ExtensionContext,
   question: NormalQuestion,
+  signal: AbortSignal | undefined,
 ): Promise<{ answer: string; source: "text" } | null> {
-  const value = await ctx.ui.input(question.question, "");
+  const value = await ctx.ui.input(question.question, "", { signal });
   const text = normalizeText(value);
   return text ? { answer: text, source: "text" } : null;
 }
@@ -867,13 +730,14 @@ function parseMultiChoiceAnswer(
 async function askOptionsQuestionBasic(
   ctx: ExtensionContext,
   question: NormalQuestion,
+  signal: AbortSignal | undefined,
 ): Promise<{ answer: string | string[]; source: AnswerSource } | null> {
   if (!question.multiSelect) {
     const options = question.options.map((option) => option.label);
     options.push(CUSTOM_LABEL);
-    const choice = await ctx.ui.select(question.question, options);
-    if (!choice) return null;
-    if (choice === CUSTOM_LABEL) return askTextQuestionBasic(ctx, question);
+    const choice = await ctx.ui.select(question.question, options, { signal });
+    if (!choice || signal?.aborted) return null;
+    if (choice === CUSTOM_LABEL) return askTextQuestionBasic(ctx, question, signal);
     return { answer: choice, source: "choice" };
   }
 
@@ -884,18 +748,9 @@ async function askOptionsQuestionBasic(
     )
     .join("\n");
   const prompt = `${question.question}\n\n${options}\n\nEnter numbers or labels separated by commas; add custom text if needed.`;
-  const value = await ctx.ui.input(prompt, "1, 2");
+  const value = await ctx.ui.input(prompt, "1, 2", { signal });
   const answers = parseMultiChoiceAnswer(normalizeText(value), question);
   return answers.length > 0 ? { answer: answers, source: "multi" } : null;
-}
-
-function firstQuestionText(args: unknown): string {
-  if (!args || typeof args !== "object") return "";
-  const raw = args as Record<string, unknown>;
-  const first = readFirstQuestion(raw);
-  return normalizeText(
-    raw.question ?? raw.q ?? first?.question ?? first?.prompt,
-  );
 }
 
 export default function askUser(pi: ExtensionAPI) {
@@ -911,31 +766,13 @@ export default function askUser(pi: ExtensionAPI) {
     label: "Ask User",
     description:
       "Ask one or more user questions. Supports options with descriptions, multi-select, and free text. Returns compact answers.",
-    promptSnippet: `Ask up to ${MAX_QUESTIONS} concise blocking questions`,
+    promptSnippet: "Ask up to 4 concise blocking questions",
     promptGuidelines: [
       "Surface uncertainty or ambiguity. Whenever missing user input blocks progress, use ask_user to ask rather than guess.",
     ],
     parameters: AskUserParams,
-    prepareArguments(args): AskUserParamsInput {
-      if (!args || typeof args !== "object") return { questions: [] };
-      const raw = args as Record<string, unknown>;
-      const questions = normalizeQuestions(raw.questions);
-      if (questions.length > 0) return toParams(questions);
-      const first = readFirstQuestion(raw);
-      const single = questionFromUnknown({
-        ...raw,
-        question:
-          raw.question ??
-          raw.q ??
-          raw.prompt ??
-          raw.message ??
-          first?.question ??
-          first?.prompt,
-        options: raw.options ?? raw.choices ?? first?.options ?? first?.choices,
-        header: raw.header ?? first?.header,
-      });
-      return toParams(single ? [single] : []);
-    },
+    outputSchema: AskUserResultSchema,
+    executionMode: "sequential",
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const answers: QuestionAnswer[] = [];
@@ -953,7 +790,7 @@ export default function askUser(pi: ExtensionAPI) {
       if (error) return buildResult({ answers, cancelled: true, error });
 
       if (ctx.mode === "tui") {
-        const result = await runQuestionnaire(ctx, questions);
+        const result = await runQuestionnaire(ctx, questions, signal);
         if (signal?.aborted)
           return buildResult({ answers, cancelled: true, error: "aborted" });
         if (!result) return buildResult({ answers, cancelled: true });
@@ -967,8 +804,8 @@ export default function askUser(pi: ExtensionAPI) {
 
         const response =
           q.options.length === 0
-            ? await askTextQuestionBasic(ctx, q)
-            : await askOptionsQuestionBasic(ctx, q);
+            ? await askTextQuestionBasic(ctx, q, signal)
+            : await askOptionsQuestionBasic(ctx, q, signal);
 
         if (signal?.aborted)
           return buildResult({ answers, cancelled: true, error: "aborted" });
@@ -985,13 +822,8 @@ export default function askUser(pi: ExtensionAPI) {
     },
 
     renderCall(args, theme) {
-      const question = firstQuestionText(args);
-      const count =
-        args &&
-        typeof args === "object" &&
-        Array.isArray((args as Record<string, unknown>).questions)
-          ? (args as { questions: unknown[] }).questions.length
-          : 1;
+      const question = normalizeText(args.questions?.[0]?.question);
+      const count = args.questions?.length ?? 0;
       const suffix = count > 1 ? ` (${count} questions)` : "";
       const text =
         theme.fg("toolTitle", theme.bold(`${TOOL_NAME} `)) +

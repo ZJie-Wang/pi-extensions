@@ -1,7 +1,7 @@
 {
   "name": "@zjie-wang/pi-subagents",
   "version": "0.1.2",
-  "description": "Lean isolated child agents for Pi with profiles, named threads, and background runs",
+  "description": "Lean isolated child conversations for Pi with named threads and explicit controls",
   "license": "MIT",
   "type": "module",
   "keywords": [
@@ -20,9 +20,13 @@
     "*.ts",
     "agents",
     "tools",
+    "tests",
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "test": "node tests/run.mjs"
+  },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",

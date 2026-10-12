@@ -1,22 +1,41 @@
 import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
+import { StringEnum } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { capOutput } from "../core.ts";
 
-const TVLY_COMMANDS = new Set([
-  "search",
-  "extract",
-  "map",
-  "research",
-  "--status",
-]);
-const TVLY_BLOCKED = new Set([
-  "auth",
-  "login",
-  "logout",
-  "--api-key",
-  "-o",
-  "--output",
-]);
+const TVLY_OPTIONS = {
+  search: {
+    flags: ["--json", "--help", "--include-images", "--include-image-descriptions"],
+    values: [
+      "--depth", "--max-results", "--topic", "--time-range", "--start-date",
+      "--end-date", "--include-domains", "--exclude-domains", "--country",
+      "--include-answer", "--include-raw-content", "--chunks-per-source",
+    ],
+  },
+  extract: {
+    flags: ["--json", "--help", "--include-images"],
+    values: ["--query", "--chunks-per-source", "--extract-depth", "--format", "--timeout"],
+  },
+  map: {
+    flags: ["--json", "--help", "--allow-external", "--no-external"],
+    values: [
+      "--max-depth", "--max-breadth", "--limit", "--instructions",
+      "--select-paths", "--exclude-paths", "--select-domains", "--exclude-domains",
+      "--timeout",
+    ],
+  },
+  run: {
+    flags: ["--json", "--help", "--no-wait", "--stream"],
+    values: ["--model", "--citation-format", "--poll-interval", "--timeout"],
+  },
+  status: { flags: ["--json", "--help"], values: [] },
+  poll: {
+    flags: ["--json", "--help"],
+    values: ["--poll-interval", "--timeout"],
+  },
+} satisfies Record<string, { flags: string[]; values: string[] }>;
 const CURL_FLAGS = new Set([
   "-L",
   "--location",
@@ -39,7 +58,6 @@ const CURL_VALUE_FLAGS = new Set([
   "--header",
   "--url",
 ]);
-const SAFE_SHORT_FLAGS = new Set(["L", "s", "S", "I"]);
 
 function requireHttpUrl(value: string): void {
   let url: URL;
@@ -68,16 +86,68 @@ export function validateWebInvocation(
 }
 
 export function validateTvly(args: readonly string[]): void {
-  if (!args.length || !TVLY_COMMANDS.has(args[0])) {
-    throw new Error(
-      "tvly requires one of: search, extract, map, research, --status",
-    );
+  let index = 0;
+  if (args[index] === "--json") index++;
+  const command = args[index++];
+  if (command === "--status" || command === "--help" || command === "--version") {
+    if (args[index] === "--json" && index === args.length - 1) index++;
+    if (index !== args.length)
+      throw new Error(`tvly ${command} does not accept further arguments`);
+    return;
   }
-  for (const arg of args) {
-    const normalized = arg.includes("=") ? arg.slice(0, arg.indexOf("=")) : arg;
-    if (TVLY_BLOCKED.has(normalized))
-      throw new Error(`Tavily option is not allowed: ${normalized}`);
+  let operation: keyof typeof TVLY_OPTIONS;
+  if (command === "research") {
+    const subcommand = args[index];
+    if (subcommand === "--help" && index === args.length - 1) return;
+    if (subcommand === "run" || subcommand === "status" || subcommand === "poll") {
+      operation = subcommand;
+      index++;
+      if (operation !== "run" && args[index] !== "--help" &&
+          (!args[index] || args[index].startsWith("-")))
+        throw new Error(`tvly research ${operation} requires a request ID immediately after the subcommand`);
+    } else {
+      if (!subcommand || subcommand.startsWith("-") || subcommand === "help" || subcommand === "get")
+        throw new Error("tvly research requires run, status, poll, or a query");
+      operation = "run";
+    }
+  } else if (command === "search" || command === "extract" || command === "map") {
+    operation = command;
+  } else {
+    throw new Error("tvly requires search, extract, map, research, --status, --version, or --help");
   }
+
+  const options: { flags: readonly string[]; values: readonly string[] } = TVLY_OPTIONS[operation];
+  const positional: string[] = [];
+  let endOfOptions = false;
+  let help = false;
+  for (; index < args.length; index++) {
+    const arg = args[index];
+    if (!endOfOptions && arg === "--") {
+      endOfOptions = true;
+      continue;
+    }
+    if (endOfOptions || !arg.startsWith("-") || arg === "-") {
+      if (!arg || arg === "-") throw new Error("Tavily requires nonempty arguments; stdin is unavailable");
+      positional.push(arg);
+      continue;
+    }
+    const equals = arg.indexOf("=");
+    const flag = equals < 0 ? arg : arg.slice(0, equals);
+    if (options.flags.includes(flag)) {
+      if (equals >= 0) throw new Error(`Tavily flag does not take a value: ${flag}`);
+      if (flag === "--help") help = true;
+    } else if (options.values.includes(flag)) {
+      const value = equals < 0 ? args[++index] : arg.slice(equals + 1);
+      if (value === undefined || value === "")
+        throw new Error(`Tavily option requires a value: ${flag}`);
+    } else {
+      throw new Error(`Tavily option is not allowed: ${flag}`);
+    }
+  }
+  const maximum = operation === "extract" ? 20 : 1;
+  if (positional.length > maximum || (!help && positional.length === 0))
+    throw new Error(`tvly ${operation} requires ${maximum === 1 ? "one positional argument" : "1-20 URLs"}`);
+  if (operation === "extract" || operation === "map") positional.forEach(requireHttpUrl);
 }
 
 export function validateCurl(args: readonly string[]): void {
@@ -124,11 +194,7 @@ export function validateCurl(args: readonly string[]): void {
       }
       continue;
     }
-    if (
-      /^-[LsSI]{2,}$/.test(arg) &&
-      [...arg.slice(1)].every((letter) => SAFE_SHORT_FLAGS.has(letter))
-    )
-      continue;
+    if (/^-[LsSI]{2,}$/.test(arg)) continue;
     throw new Error(
       `Curl option is not allowed for read-only retrieval: ${flag}`,
     );
@@ -136,40 +202,40 @@ export function validateCurl(args: readonly string[]): void {
   if (!urls) throw new Error("curl requires at least one HTTP(S) URL");
 }
 
-interface WebInput {
-  program: "tvly" | "curl" | "date";
-  args: string[];
-  timeout?: number;
-}
+const WebParams = Type.Object({
+  program: StringEnum(["tvly", "curl", "date"] as const, {
+    description: "Read-oriented CLI to execute",
+  }),
+  args: Type.Array(Type.String(), {
+    description: "Argument vector",
+    maxItems: 80,
+  }),
+  timeout: Type.Optional(Type.Integer({
+    description: "Timeout in seconds (default 120, maximum 120)",
+    minimum: 1,
+    maximum: 120,
+  })),
+}, { additionalProperties: false });
 
-const WebParams = {
-  type: "object",
-  properties: {
-    program: {
-      anyOf: [
-        { const: "tvly", type: "string" },
-        { const: "curl", type: "string" },
-        { const: "date", type: "string" },
-      ],
-      description: "Read-oriented CLI to execute",
+function boundedOutput() {
+  const limit = 100 * 1024;
+  const decoder = new StringDecoder("utf8");
+  let bytes = 0;
+  let text = "";
+  return {
+    append(chunk: Buffer) {
+      if (bytes === limit) return false;
+      const retained = chunk.subarray(0, limit - bytes);
+      bytes += retained.length;
+      text += decoder.write(retained);
+      return retained.length > 0;
     },
-    args: {
-      type: "array",
-      items: { type: "string" },
-      description:
-        "Argument vector. Each item is passed directly; no shell parsing occurs.",
-      maxItems: 80,
+    end() {
+      if (bytes < limit) text += decoder.end();
     },
-    timeout: {
-      type: "integer",
-      description: "Timeout in seconds (default 120, maximum 120)",
-      minimum: 1,
-      maximum: 120,
-    },
-  },
-  required: ["program", "args"],
-  additionalProperties: false,
-} as any;
+    text: () => text,
+  };
+}
 
 export interface WebDetails {
   program: string;
@@ -180,23 +246,22 @@ export interface WebDetails {
 
 export default function createTool(
   cwd: string,
-): ToolDefinition<any, WebDetails> {
+): ToolDefinition<typeof WebParams, WebDetails> {
   return {
     name: "web",
     label: "Web",
     description:
       "Run guarded read-oriented Tavily or curl retrieval, or check the system date.",
-    promptSnippet:
-      "Retrieve external information with guarded Tavily and curl commands, or check the system date",
     parameters: WebParams,
-    async execute(_toolCallId, rawParams, signal, onUpdate) {
-      const params = rawParams as WebInput;
+    async execute(_toolCallId, params, signal, onUpdate) {
       validateWebInvocation(params.program, params.args);
+      if (signal?.aborted) throw new Error("Web command aborted");
       const startedAt = Date.now();
       const timeoutMs = (params.timeout ?? 120) * 1_000;
       const commandArgs =
         params.program === "curl"
           ? [
+              "-q",
               "--proto",
               "=http,https",
               "--proto-redir",
@@ -204,13 +269,8 @@ export default function createTool(
               ...params.args,
             ]
           : params.args;
-      let stdout = "";
-      let stderr = "";
-      let settled = false;
-      const appendBounded = (current: string, chunk: string) => {
-        if (Buffer.byteLength(current, "utf8") >= 100 * 1024) return current;
-        return current + chunk;
-      };
+      const stdout = boundedOutput();
+      const stderr = boundedOutput();
 
       const result = await new Promise<{
         exitCode: number | null;
@@ -225,32 +285,16 @@ export default function createTool(
         });
         let timedOut = false;
         let aborted = false;
+        let killTimer: ReturnType<typeof setTimeout> | undefined;
         const cleanup = () => {
           clearTimeout(timer);
+          clearTimeout(killTimer);
           signal?.removeEventListener("abort", abort);
         };
-        const finish = (exitCode: number | null) => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          resolve({ exitCode, aborted, timedOut });
-        };
-        const fail = (error: Error) => {
-          if (settled) return;
-          settled = true;
-          cleanup();
-          reject(error);
-        };
         const stop = () => {
-          try {
-            child.kill("SIGTERM");
-          } catch {}
-          setTimeout(() => {
-            if (!settled)
-              try {
-                child.kill("SIGKILL");
-              } catch {}
-          }, 1_000).unref();
+          if (killTimer) return;
+          child.kill("SIGTERM");
+          killTimer = setTimeout(() => child.kill("SIGKILL"), 1_000).unref();
         };
         const abort = () => {
           aborted = true;
@@ -262,9 +306,9 @@ export default function createTool(
         }, timeoutMs);
         timer.unref();
         child.stdout.on("data", (data) => {
-          stdout = appendBounded(stdout, data.toString());
+          if (!stdout.append(data)) return;
           onUpdate?.({
-            content: [{ type: "text", text: capOutput(stdout) }],
+            content: [{ type: "text", text: capOutput(stdout.text()) }],
             details: {
               program: params.program,
               args: params.args,
@@ -274,14 +318,16 @@ export default function createTool(
           });
         });
         child.stderr.on("data", (data) => {
-          stderr = appendBounded(stderr, data.toString());
+          stderr.append(data);
         });
-        child.once("error", fail);
-        child.once("close", finish);
+        child.once("error", (error) => { cleanup(); reject(error); });
+        child.once("close", (exitCode) => { cleanup(); resolve({ exitCode, aborted, timedOut }); });
         if (signal?.aborted) abort();
         else signal?.addEventListener("abort", abort, { once: true });
       });
 
+      stdout.end();
+      stderr.end();
       const details: WebDetails = {
         program: params.program,
         args: [...params.args],
@@ -289,7 +335,7 @@ export default function createTool(
         durationMs: Date.now() - startedAt,
       };
       const combined = capOutput(
-        [stdout.trim(), stderr.trim()].filter(Boolean).join("\n\n"),
+        [stdout.text().trim(), stderr.text().trim()].filter(Boolean).join("\n\n"),
       );
       if (result.aborted) throw new Error("Web command aborted");
       if (result.timedOut)

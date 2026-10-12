@@ -8,10 +8,6 @@ export interface ProfileRefresh {
   warning?: string;
 }
 
-function profileSignature(profiles: AgentProfile[]): string {
-  return JSON.stringify(profiles);
-}
-
 export function loadProfiles(directory: string, knownTools: ReadonlySet<string>): AgentProfile[] {
   if (!fs.existsSync(directory)) throw new Error(`Subagent profile directory does not exist: ${directory}`);
   const files = fs.readdirSync(directory, { withFileTypes: true })
@@ -36,24 +32,16 @@ export class ProfileStore {
   private profiles: AgentProfile[];
   private signature: string;
   private lastWarning?: string;
-  private readonly directory: string;
-  private knownTools: ReadonlySet<string>;
 
-  constructor(directory: string, knownTools: ReadonlySet<string>) {
-    this.directory = directory;
-    this.knownTools = knownTools;
+  constructor(private readonly directory: string, knownTools: ReadonlySet<string>) {
     this.profiles = loadProfiles(directory, knownTools);
-    this.signature = profileSignature(this.profiles);
+    this.signature = JSON.stringify(this.profiles);
   }
 
-  setKnownTools(knownTools: ReadonlySet<string>): void {
-    this.knownTools = knownTools;
-  }
-
-  refresh(): ProfileRefresh {
+  refresh(knownTools: ReadonlySet<string>): ProfileRefresh {
     try {
-      const next = loadProfiles(this.directory, this.knownTools);
-      const signature = profileSignature(next);
+      const next = loadProfiles(this.directory, knownTools);
+      const signature = JSON.stringify(next);
       const changed = signature !== this.signature;
       if (changed) {
         this.profiles = next;

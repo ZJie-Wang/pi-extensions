@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
-
 export type ChildToolFactory = (cwd: string) => ToolDefinition<any, any>;
 
 /**
@@ -15,10 +14,7 @@ export class ChildToolRegistry {
   private files = new Map<string, string>();
   private signature = "";
 
-  private readonly directory: string;
-
-  constructor(directory: string) {
-    this.directory = directory;
+  constructor(private readonly directory: string) {
     this.refresh();
   }
 

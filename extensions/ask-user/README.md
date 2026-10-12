@@ -25,31 +25,26 @@
         "description": "Question(s) to ask.",
         "items": {
           "type": "object",
-          "required": ["question", "header"],
+          "required": ["question"],
           "properties": {
             "question": {
               "type": "string",
               "maxLength": 1000,
               "description": "The complete question. Clear, specific, ends with a question mark."
             },
-            "header": {
-              "type": "string",
-              "maxLength": 16,
-              "description": "Short chip labeling this question in the dialog, e.g. \"Approach\", \"Library\". MAX 16 CHARACTERS."
-            },
             "options": {
               "type": "array",
               "minItems": 2,
               "maxItems": 4,
-              "description": "2-4 distinct options that are mutually exclusive unless multiSelect, with the recommended option first. A free-text row is added automatically; do not author one. Omit options for a free-text question.",
+              "description": "2-4 distinct options, with the recommended one first. Omit options for a free-text question.",
               "items": {
                 "type": "object",
-                "required": ["label", "description"],
+                "required": ["label"],
                 "properties": {
                   "label": {
                     "type": "string",
                     "maxLength": 60,
-                    "description": "Short option label (1-5 words). MAX 60 CHARACTERS."
+                    "description": "Short option label (1-5 words)."
                   },
                   "description": {
                     "type": "string",
@@ -62,7 +57,7 @@
             "multiSelect": {
               "type": "boolean",
               "default": false,
-              "description": "Allow selecting multiple options. Use when options are not mutually exclusive. Defaults false."
+              "description": "Allow selecting multiple options. Use when options are not mutually exclusive."
             }
           }
         }
@@ -87,7 +82,3 @@ Guidelines:
 ```bash
 pi install npm:@zjie-wang/pi-ask-user
 ```
-
-## Source
-
-Part of the [pi-extensions](https://github.com/ZJie-Wang/pi-extensions) collection. This extension works individually, but it is worth reviewing the collection README — it covers the design notes and the other extensions.

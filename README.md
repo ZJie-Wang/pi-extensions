@@ -7,7 +7,7 @@ Sharing extensions I built for my [pi agent harness](https://github.com/earendil
 | Extension | Tools | What it is |
 |---|---|---|
 | [ask-user](extensions/ask-user/README.md) | `ask_user` | Interactive question dialog — options with descriptions, multi-select, free text. |
-| [plan](extensions/plan/README.md) | `present_plan` | Plan mode: read-only exploration, then write and open a markdown plan. |
+| [lazygit](extensions/lazygit/index.ts) | `/lazygit`, `ctrl+alt+l` | Hands the terminal to lazygit in the current directory, then returns to pi. |
 | [subagents](extensions/subagents/README.md) | `subagent_run`, `subagent_control` | Isolated child pi agents with profiles, named threads, and background runs. |
 | [todo](extensions/todo/README.md) | `todo` | Multi-phase progress tracker with a live TUI widget. |
 
@@ -17,12 +17,11 @@ Install the extensions you want from npm:
 
 ```bash
 pi install npm:@zjie-wang/pi-ask-user
-pi install npm:@zjie-wang/pi-plan
 pi install npm:@zjie-wang/pi-subagents
 pi install npm:@zjie-wang/pi-todo
 ```
 
-To load all four directly from GitHub instead:
+To load all four directly from GitHub instead (lazygit has no npm package yet):
 
 ```bash
 pi install git:github.com/ZJie-Wang/pi-extensions

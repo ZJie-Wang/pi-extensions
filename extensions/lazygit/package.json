@@ -1,7 +1,7 @@
 {
-  "name": "@zjie-wang/pi-plan",
-  "version": "0.1.2",
-  "description": "Read-only planning mode for Pi that writes and opens Markdown plans",
+  "name": "@zjie-wang/pi-lazygit",
+  "version": "0.1.0",
+  "description": "Open lazygit from Pi with a command or the ctrl+alt+l shortcut",
   "license": "MIT",
   "type": "module",
   "keywords": [
@@ -12,23 +12,16 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ZJie-Wang/pi-extensions.git",
-    "directory": "extensions/plan"
+    "directory": "extensions/lazygit"
   },
-  "homepage": "https://github.com/ZJie-Wang/pi-extensions/tree/main/extensions/plan",
+  "homepage": "https://github.com/ZJie-Wang/pi-extensions/tree/main/extensions/lazygit",
   "bugs": "https://github.com/ZJie-Wang/pi-extensions/issues",
   "files": [
     "index.ts",
-    "lib",
-    "config",
-    "README.md",
     "LICENSE"
   ],
   "peerDependencies": {
-    "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*",
-    "typebox": "*"
+    "@earendil-works/pi-coding-agent": "*"
   },
   "pi": {
     "extensions": [

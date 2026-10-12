@@ -1,9 +1,11 @@
+import type { Usage } from "@earendil-works/pi-ai/compat";
+
 export const BUILTIN_TOOLS = new Set(["read", "grep", "find", "ls", "write", "edit", "bash"]);
 export const MAX_OUTPUT_BYTES = 50 * 1024;
 export const MAX_OUTPUT_LINES = 2_000;
 
 const AGENT_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
-const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+export const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 export interface AgentProfile {
   name: string;
@@ -18,19 +20,14 @@ export interface AgentProfile {
   filePath: string;
 }
 
-export interface UsageSummary {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-  totalTokens: number;
-  cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+export interface UsageSummary extends Usage {
   turns: number;
 }
 
 export interface RunOutcome {
   status: "completed" | "failed" | "aborted";
   output: string;
+  fullOutputPath?: string;
   error?: string;
   usage: UsageSummary;
   startedAt: number;
@@ -49,18 +46,18 @@ export function emptyUsage(): UsageSummary {
   };
 }
 
-export function addUsage(target: UsageSummary, usage: any): void {
-  target.input += usage?.input ?? 0;
-  target.output += usage?.output ?? 0;
-  target.cacheRead += usage?.cacheRead ?? 0;
-  target.cacheWrite += usage?.cacheWrite ?? 0;
-  target.totalTokens += usage?.totalTokens ?? 0;
-  target.cost.input += usage?.cost?.input ?? 0;
-  target.cost.output += usage?.cost?.output ?? 0;
-  target.cost.cacheRead += usage?.cost?.cacheRead ?? 0;
-  target.cost.cacheWrite += usage?.cost?.cacheWrite ?? 0;
-  target.cost.total += usage?.cost?.total ?? 0;
-  target.turns += 1;
+export function addUsage(target: UsageSummary, usage: Usage & { turns?: number }, turns = usage.turns ?? 1): void {
+  target.input += usage.input;
+  target.output += usage.output;
+  target.cacheRead += usage.cacheRead;
+  target.cacheWrite += usage.cacheWrite;
+  target.totalTokens += usage.totalTokens;
+  target.cost.input += usage.cost.input;
+  target.cost.output += usage.cost.output;
+  target.cost.cacheRead += usage.cost.cacheRead;
+  target.cost.cacheWrite += usage.cost.cacheWrite;
+  target.cost.total += usage.cost.total;
+  target.turns += turns;
 }
 
 export function parseStringList(value: unknown, field: string): string[] {
@@ -135,11 +132,13 @@ function utf8Prefix(text: string, maxBytes: number): string {
   return buffer.subarray(0, end).toString("utf8");
 }
 
-export function capOutput(text: string): string {
-  const lines = text.split("\n");
-  const lineLimited = lines.length > MAX_OUTPUT_LINES ? lines.slice(0, MAX_OUTPUT_LINES).join("\n") : text;
-  const notice = "\n\n[Output truncated to 50 KB / 2,000 lines. Continue the thread for details.]";
-  if (lineLimited === text && Buffer.byteLength(text, "utf8") <= MAX_OUTPUT_BYTES) return text;
+export function capOutput(text: string, fullOutputPath?: string): string {
+  const lines = text.split("\n", MAX_OUTPUT_LINES + 1);
+  if (lines.length <= MAX_OUTPUT_LINES && Buffer.byteLength(text, "utf8") <= MAX_OUTPUT_BYTES) return text;
+  const notice = fullOutputPath
+    ? `\n\n[Output truncated. Full output: ${fullOutputPath}]`
+    : "\n\n[Output truncated to 50 KB / 2,000 lines.]";
+  const lineLimited = lines.slice(0, MAX_OUTPUT_LINES - 2).join("\n");
   return utf8Prefix(lineLimited, MAX_OUTPUT_BYTES - Buffer.byteLength(notice, "utf8")) + notice;
 }
 

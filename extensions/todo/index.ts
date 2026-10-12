@@ -7,7 +7,6 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
-  activationSummary,
   applyTodoAction,
   listContent,
   progressIcon,
@@ -18,7 +17,6 @@ import {
   type TodoDetails,
   type TodoItem,
   type TodoOperation,
-  type TodoState,
 } from "./core.ts";
 
 const TOOL_NAME = "todo";
@@ -48,7 +46,7 @@ const TodoParams = Type.Object(
         minItems: 1,
         uniqueItems: true,
         description:
-          "IDs completed; required for update. If the active phase is completed, the next pending phase becomes active automatically.",
+          "IDs completed. Update requires completedIds or activeId. Completing the active phase activates the next pending phase.",
       }),
     ),
     activeId: Type.Optional(
@@ -57,6 +55,23 @@ const TodoParams = Type.Object(
         description: "ID of an unfinished phase to jump to manually.",
       }),
     ),
+  },
+  { additionalProperties: false },
+);
+
+const TodoOutput = Type.Object(
+  {
+    action: StringEnum(["new", "update", "list", "clear"] as const),
+    items: Type.Array(Type.Object({
+      id: Type.Integer({ minimum: 1 }),
+      title: Type.String({ minLength: 1 }),
+      status: StringEnum(["pending", "active", "done"] as const),
+    }, { additionalProperties: false })),
+    error: Type.Optional(Type.String()),
+    message: Type.Optional(Type.String()),
+    completedIds: Type.Optional(Type.Array(Type.Integer({ minimum: 1 }), { uniqueItems: true })),
+    activatedId: Type.Optional(Type.Integer({ minimum: 1 })),
+    cleared: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -86,6 +101,19 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    const visible = visibleWidgetItems(9);
+    const done = items.filter((item) => item.status === "done").length;
+    const remaining = items.length - visible.length;
+    const hiddenDone = done - visible.filter((item) => item.status === "done").length;
+    const hiddenOpen = remaining - hiddenDone;
+    const extra = [
+      hiddenOpen > 0 ? `${hiddenOpen} open` : undefined,
+      hiddenDone > 0 ? `${hiddenDone} done` : undefined,
+    ].filter(Boolean).join(", ");
+    const progressWidth = 10;
+    const filled = Math.round((done / items.length) * progressWidth);
+    const total = items.length;
+
     ctx.ui.setWidget(WIDGET_ID, (tui, theme) => {
       let cachedLines: string[] | undefined;
       let cacheWidth = -1;
@@ -98,36 +126,28 @@ export default function (pi: ExtensionAPI) {
             tui.requestRender();
           }, 1000)
         : undefined;
-      (pulseTimer as any)?.unref?.();
+      pulseTimer?.unref();
 
       return {
         render: (width: number) => {
           if (cachedLines && cacheWidth === width) return cachedLines;
 
           const lines: string[] = [];
-          const done = items.filter((item) => item.status === "done").length;
-          const visible = visibleWidgetItems(9);
-          const hasOpenWork = items.some((item) => item.status !== "done");
-          const progressWidth = 10;
-          const filled =
-            items.length > 0
-              ? Math.round((done / items.length) * progressWidth)
-              : 0;
           const inset = " ";
           const progressBar =
             theme.fg("success", "━".repeat(filled)) +
             theme.fg("dim", "─".repeat(progressWidth - filled));
-          const headingIcon = theme.fg("toolTitle", hasOpenWork ? "●" : "✓");
+          const headingIcon = theme.fg("toolTitle", done < total ? "●" : "✓");
           const heading = `${headingIcon} ${theme.fg("toolTitle", theme.bold("Todos"))} ${theme.fg(
             "muted",
-            `${done}/${items.length}`,
+            `${done}/${total}`,
           )} ${progressBar}`;
           lines.push(truncateToWidth(inset + heading, width));
 
           for (let index = 0; index < visible.length; index++) {
             const item = visible[index];
             const isLastVisible =
-              index === visible.length - 1 && items.length === visible.length;
+              index === visible.length - 1 && remaining === 0;
             const branch = theme.fg("dim", isLastVisible ? "└─" : "├─");
             const mark =
               item.status === "done"
@@ -155,20 +175,7 @@ export default function (pi: ExtensionAPI) {
             );
           }
 
-          if (items.length > visible.length) {
-            const visibleIds = new Set(visible.map((item) => item.id));
-            const hidden = items.filter((item) => !visibleIds.has(item.id));
-            const remaining = hidden.length;
-            const hiddenDone = hidden.filter(
-              (item) => item.status === "done",
-            ).length;
-            const hiddenOpen = remaining - hiddenDone;
-            const extra = [
-              hiddenOpen > 0 ? `${hiddenOpen} open` : undefined,
-              hiddenDone > 0 ? `${hiddenDone} done` : undefined,
-            ]
-              .filter(Boolean)
-              .join(", ");
+          if (remaining > 0) {
             lines.push(
               truncateToWidth(
                 `${inset}${theme.fg("dim", "└─")} ${theme.fg("dim", `+${remaining} more${extra ? ` (${extra})` : ""}`)}`,
@@ -192,30 +199,24 @@ export default function (pi: ExtensionAPI) {
   };
 
   const persistState = () => {
-    pi.appendEntry(STATE_ENTRY_TYPE, snapshot(items) satisfies TodoState);
+    pi.appendEntry(STATE_ENTRY_TYPE, snapshot(items));
   };
 
-  const resultFromOperation = (operation: TodoOperation) => ({
-    content: [
-      {
+  const resultFromOperation = (operation: TodoOperation) => {
+    const { changed: _changed, schemaVersion, ...output } = operation;
+    const structuredContent = { ...output, items: snapshot(operation.items).items };
+    return {
+      content: [{
         type: "text" as const,
-        text:
-          operation.action === "list" && !operation.error
-            ? listContent(operation.items)
-            : todoMessage(operation),
-      },
-    ],
-    details: {
-      schemaVersion: 2,
-      action: operation.action,
-      items: operation.items.map((item) => ({ ...item })),
-      error: operation.error,
-      message: operation.message,
-      completedIds: operation.completedIds,
-      activatedId: operation.activatedId,
-      cleared: operation.cleared,
-    } satisfies TodoDetails,
-  });
+        text: operation.action === "list" && !operation.error
+          ? listContent(operation.items)
+          : todoMessage(operation),
+      }],
+      details: { schemaVersion, ...structuredContent } satisfies TodoDetails,
+      structuredContent,
+      isError: !!operation.error,
+    };
+  };
 
   pi.on("session_start", (_event, ctx) => reconstructState(ctx));
   pi.on("session_tree", (_event, ctx) => reconstructState(ctx));
@@ -241,15 +242,12 @@ export default function (pi: ExtensionAPI) {
       "Once a todo tracker is started, remember to update it promptly after each phase completes.",
     ],
     parameters: TodoParams,
+    outputSchema: TodoOutput,
+    executionMode: "sequential",
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const operation = applyTodoAction(
-        items,
-        params as Parameters<typeof applyTodoAction>[1],
-      );
-
-      if (!operation.error) {
-        items = operation.items.map((item) => ({ ...item }));
-        if (operation.changed) persistState();
+      const operation = applyTodoAction(items, params);
+      if (operation.changed) {
+        items = operation.items;
         updateWidget(ctx);
       }
 
@@ -296,7 +294,8 @@ export default function (pi: ExtensionAPI) {
       const icon = progressIcon(details.items, completedIds);
       const iconColor =
         icon === "●" ? "warning" : icon === "✓" ? "success" : "dim";
-      const activated = activationSummary(details.items, details.activatedId);
+      const activated = details.activatedId === undefined
+        ? undefined : `#${details.activatedId} activated`;
       let text = activated
         ? `${theme.fg("muted", "→")} ${theme.fg("accent", activated)}`
         : theme.fg(iconColor, `${icon} `) +

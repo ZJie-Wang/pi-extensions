@@ -7,7 +7,7 @@ Sharing extensions I built for my [pi agent harness](https://github.com/earendil
 | Extension | Tools | What it is |
 |---|---|---|
 | [ask-user](extensions/ask-user/README.md) | `ask_user` | Interactive question dialog — options with descriptions, multi-select, free text. |
-| [lazygit](extensions/lazygit/index.ts) | `/lazygit`, `ctrl+alt+l` | Hands the terminal to lazygit in the current directory, then returns to pi. |
+| [lazygit](extensions/lazygit/index.ts) | - | Hands the terminal to lazygit in the current directory, then returns to pi. |
 | [subagents](extensions/subagents/README.md) | `subagent_run`, `subagent_control` | Isolated child pi agents with profiles, named threads, and background runs. |
 | [todo](extensions/todo/README.md) | `todo` | Multi-phase progress tracker with a live TUI widget. |
 
@@ -27,7 +27,7 @@ To load all four directly from GitHub instead (lazygit has no npm package yet):
 pi install git:github.com/ZJie-Wang/pi-extensions
 ```
 
-After installing the packages, you should be able to find them at `~/.pi/agent/npm/node_modules/@zjie-wang`. You can also install them by just copying the extension folders into your `~/.pi/agent/extensions` and maintain them yourself.
+After installing the packages, you should be able to find them at `~/.pi/agent/npm/node_modules/@zjie-wang`. You can also install them by just copying the extension folders into your `~/.pi/agent/extensions` and maintain them yourself (I still recommend this way).
 
 ## Some notes
 

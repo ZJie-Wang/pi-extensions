@@ -1,6 +1,6 @@
 {
   "name": "@zjie-wang/pi-todo",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Session-persistent multi-phase todo tracker with a live Pi TUI widget",
   "license": "MIT",
   "type": "module",

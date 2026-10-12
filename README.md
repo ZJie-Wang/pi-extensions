@@ -32,9 +32,7 @@ After installing the packages, you should be able to find them at `~/.pi/agent/n
 
 ## Some notes
 
-These extensions are definitely not the most powerful ones you can find, and that's not what I'm trying to achieve either. I personally don't have a super heavy, fully automatic workflow to run in my pi harness (I also don't think pi is meant to run things like that). Instead, I just want an agent I can collaborate with without needing to "have a fight first".
-
-The main reason I built these rather than installing the popular community extensions is that, although there are many powerful extensions out there, I think most of them inject too much tool guidance/schema into the model's context which actually violates the principle of clean context proposed by pi. What I'm looking for is just something light, controllable and useful, or why am I using pi instead of claude code or codex? Why would someone think they can build a better harness themselves than the big labs can?
+These extensions are definitely not the most powerful ones you can find, and that's not what I'm trying to achieve either. I think most of the popular community extensions inject too much context, whereas I'm just looking for something light, controllable and useful, or why am I using pi instead of claude code or codex?
 
 Also, I have handwritten many of the instructions and guidelines these extensions come with to make sure they work the way I expect. I test them with `deepseek-v4-flash`, and the experience is quite smooth. So I would assume it should work well with most models out of the box.
 

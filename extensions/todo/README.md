@@ -49,7 +49,7 @@ Available tools:
 - todo: Track multi-phase progress
 
 Guidelines:
-- Use todo for complex work with 3+ meaningfully coordinated phases. Once the tracker exists, complete phases in real time.
+- Use todo for complex work with 3+ meaningfully coordinated phases. Once a tracker is set, remember to update it in real time.
 ```
 
 ## Install

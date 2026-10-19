@@ -188,8 +188,6 @@ Available tools:
 - subagent_control: Interact with existing subagent threads
 ```
 
-No guidelines for this one — the schema's `action` enum is the whole story.
-
 ## Note
 
 This subagent extension is definitely not the most powerful one compared with what you can find from the community. However, all design decisions are made deliberately to keep it lean and light (relatively), while being as useful as possible.

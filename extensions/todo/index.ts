@@ -210,7 +210,7 @@ export default function (pi: ExtensionAPI) {
     description: "Track complex work in phases.",
     promptSnippet: "Track multi-phase progress",
     promptGuidelines: [
-      "Use todo for complex work with 3+ meaningfully coordinated phases. Once the tracker exists, complete phases in real time.",
+      "Use todo for complex work with 3+ meaningfully coordinated phases. Once a tracker is set, remember to update it in real time.",
     ],
     parameters: TodoParams,
     outputSchema: TodoOutput,

@@ -34,7 +34,7 @@ After installing the packages, you should be able to find them at `~/.pi/agent/n
 
 ## Some notes
 
-These extensions are definitely not the most powerful ones you can find, and that's not what I'm trying to achieve either. I think most of the popular community extensions inject too much context, whereas I'm just looking for something light, controllable and useful, or why am I using pi instead of claude code or codex?
+These extensions are definitely not the most powerful ones you can find, and that's not what I'm trying to achieve either. I made these extensions just because I think most popular community extensions inject too much context. Installing just a few of them, my pi is more bloated than codex. However, I'm just looking for something light and controllable; or why am I not using codex directly.
 
 Also, I have handwritten many of the instructions and guidelines these extensions come with to make sure they work the way I expect. I test them with `deepseek-v4-flash`, and the experience is quite smooth. So I would assume it should work well with most models out of the box.
 

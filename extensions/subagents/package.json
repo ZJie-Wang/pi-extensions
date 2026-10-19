@@ -1,6 +1,6 @@
 {
   "name": "@zjie-wang/pi-subagents",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Lean isolated child conversations for Pi with named threads and explicit controls",
   "license": "MIT",
   "type": "module",

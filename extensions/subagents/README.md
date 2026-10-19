@@ -93,6 +93,7 @@ Use `~/.pi/agent/subagents.json` to override a profile's model or thinking level
 | Agent | Tools |
 |---|---|
 | `scout` | `read`, `grep`, `find`, `ls` |
+| `searcher` | `web_search`, `web_fetch` |
 | `reviewer` | `read`, `grep`, `find`, `ls` |
 | `worker` | `read`, `grep`, `find`, `ls`, `write`, `edit`, `bash` |
 
@@ -117,8 +118,8 @@ Use `~/.pi/agent/subagents.json` to override a profile's model or thinking level
       },
       "profile": {
         "type": "string",
-        "enum": ["reviewer", "scout", "worker"],
-        "description": "Required for new; omit for continue. Available:\n- reviewer: Assess work against stated requirements and check code quality; use for essential review gates.\n- scout: Explore massive codebases, locate evidence in noisy environments, and return brief findings.\n- worker: Implement disjoint, well-scoped changes and return a concise, verifiable integration summary."
+        "enum": ["${profiles.names()}"],
+        "description": "Required for new; omit for continue. Available:\n${profiles.describe()}"
       },
       "thread": {
         "type": "string",

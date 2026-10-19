@@ -1,20 +1,21 @@
 import * as fs from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentSession, ExtensionAPI, ExtensionContext, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionAPI, ExtensionContext, ModelRuntime, ToolInfo } from "@earendil-works/pi-coding-agent";
 import {
+  convertToLlm,
   createAgentSession,
   DefaultResourceLoader,
   getAgentDir,
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage, Model } from "@earendil-works/pi-ai/compat";
+import type { AssistantMessage, Message, Model } from "@earendil-works/pi-ai/compat";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { addUsage, BUILTIN_TOOLS, capOutput, emptyUsage, type AgentProfile, preview, toolArgsPreview, type RunOutcome } from "./core.ts";
-import type { ChildSession, ToolActivity } from "./manager.ts";
-import type { ChildToolRegistry } from "./tool-loader.ts";
+import { addUsage, capOutputWithArtifact, emptyUsage, SUBAGENT_TOOLS, type AgentProfile, preview, toolArgsPreview, type RunOutcome, type UsageSummary } from "./core.ts";
+import type { ChildRunUpdate, ChildSession, ToolActivity } from "./manager.ts";
+
+const PI_BUILTIN_TOOLS = new Set(["read", "grep", "find", "ls", "write", "edit", "bash", "powershell"]);
 
 export interface ParentSnapshot {
   cwd: string;
@@ -24,6 +25,7 @@ export interface ParentSnapshot {
   scopedModels: ExtensionContext["scopedModels"];
   settings: ReturnType<ExtensionAPI["getSettings"]>;
   projectTrusted: boolean;
+  inheritedMessages?: Message[];
 }
 
 function parentModelRuntime(registry: ParentSnapshot["modelRegistry"]): ModelRuntime {
@@ -37,8 +39,8 @@ function parentModelRuntime(registry: ParentSnapshot["modelRegistry"]): ModelRun
 
 function resolveModel(profile: AgentProfile, parent: ParentSnapshot): Model<any> | undefined {
   if (!profile.model) return parent.model;
-  if (profile.model.includes("/")) {
-    const slash = profile.model.indexOf("/");
+  const slash = profile.model.indexOf("/");
+  if (slash >= 0) {
     const model = parent.modelRegistry.find(profile.model.slice(0, slash), profile.model.slice(slash + 1));
     if (!model) throw new Error(`${profile.filePath}: model not found: ${profile.model}`);
     return model;
@@ -59,14 +61,25 @@ function messagePreview(message: AssistantMessage): string {
   return preview(text.split("\n").filter((line) => line.trim() && !line.trimStart().startsWith("```")).slice(0, 3).join(" "), 300);
 }
 
-export class PiChildSession implements ChildSession {
-  constructor(private readonly session: AgentSession) {}
+function collectUsage(session: AgentSession, startEntryCount: number): UsageSummary {
+  const usage = emptyUsage();
+  for (const entry of session.sessionManager.getEntries().slice(startEntryCount)) {
+    if (entry.type === "message" && (entry.message.role === "assistant" || entry.message.role === "toolResult")) {
+      if (entry.message.usage) addUsage(usage, entry.message.usage, entry.message.role === "assistant" ? 1 : 0);
+    } else if ((entry.type === "usage" || entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
+      addUsage(usage, entry.usage, 0);
+    }
+  }
+  return usage;
+}
 
-  async run(prompt: string, onUpdate: Parameters<ChildSession["run"]>[1], signal: AbortSignal): Promise<RunOutcome> {
+class PiChildSession implements ChildSession {
+  constructor(private readonly session: AgentSession, private needsHandoff = false) {}
+
+  async run(prompt: string, onUpdate: (update: ChildRunUpdate) => void, signal: AbortSignal): Promise<RunOutcome> {
     const startedAt = Date.now();
     const startEntryCount = this.session.sessionManager.getEntryCount();
     let message: AssistantMessage | undefined;
-    const checkCancelled = () => signal.throwIfAborted();
     const abort = () => { void this.session.abort().catch(() => {}); };
     signal.addEventListener("abort", abort, { once: true });
     const tools: ToolActivity[] = [];
@@ -77,7 +90,7 @@ export class PiChildSession implements ChildSession {
       if (event.type === "compaction_start" && signal.aborted) this.session.abortCompaction();
       if (event.type === "tool_execution_start") {
         toolCount++;
-        const args = toolArgsPreview(event.toolName, event.args);
+        const args = toolArgsPreview(event.args);
         tools.push({
           toolCallId: event.toolCallId,
           tool: event.toolName,
@@ -85,7 +98,7 @@ export class PiChildSession implements ChildSession {
           status: "running",
         });
         if (tools.length > 20) tools.shift();
-        emitTools(`${event.toolName} · ${args}`);
+        emitTools(args ? `${event.toolName} · ${args}` : event.toolName);
       }
       if (event.type === "tool_execution_end") {
         const tool = tools.find((entry) => entry.toolCallId === event.toolCallId);
@@ -100,11 +113,17 @@ export class PiChildSession implements ChildSession {
 
     let thrown: unknown;
     try {
-      checkCancelled();
-      await this.session.prompt(prompt, {
+      signal.throwIfAborted();
+      const task = this.needsHandoff
+        ? `The preceding conversation is from your parent agent. Use it as background for the following task:\n\n${prompt}`
+        : prompt;
+      await this.session.prompt(task, {
         expandPromptTemplates: false,
         source: "extension",
-        preflightResult: checkCancelled,
+        preflightResult: (result) => {
+          signal.throwIfAborted();
+          if (result === "started") this.needsHandoff = false;
+        },
       });
     } catch (error) {
       thrown = error;
@@ -114,39 +133,29 @@ export class PiChildSession implements ChildSession {
     }
 
     // Raw entries remain append-only when compaction rebuilds the message array.
-    const usage = emptyUsage();
-    for (const entry of this.session.sessionManager.getEntries().slice(startEntryCount)) {
-      if (entry.type === "message" && (entry.message.role === "assistant" || entry.message.role === "toolResult")) {
-        if (entry.message.usage) addUsage(usage, entry.message.usage, entry.message.role === "assistant" ? 1 : 0);
-      } else if ((entry.type === "usage" || entry.type === "compaction" || entry.type === "branch_summary") && entry.usage) {
-        addUsage(usage, entry.usage, 0);
-      }
-    }
+    const usage = collectUsage(this.session, startEntryCount);
     const fullOutput = assistantText(message);
-    let fullOutputPath: string | undefined;
-    let output = capOutput(fullOutput);
-    if (output !== fullOutput) {
-      try {
-        const directory = await mkdtemp(path.join(os.tmpdir(), "pi-subagent-"));
-        fullOutputPath = path.join(directory, "output.txt");
-        await writeFile(fullOutputPath, fullOutput, { encoding: "utf8", mode: 0o600 });
-        output = capOutput(fullOutput, fullOutputPath);
-      } catch {
-        fullOutputPath = undefined;
-      }
-    }
+    const { output, fullOutputPath } = capOutputWithArtifact(fullOutput);
     const stopReason = message?.stopReason;
-    const error = signal.aborted ? "Subagent stopped" : thrown instanceof Error ? thrown.message : thrown ? String(thrown) : message?.errorMessage;
-    const status = signal.aborted || stopReason === "aborted"
-      ? "aborted"
-      : error || stopReason === "error" || stopReason === "length" || !output
-        ? "failed"
-        : "completed";
+    let error = message?.errorMessage;
+    if (signal.aborted) error = "Subagent stopped";
+    else if (thrown instanceof Error) error = thrown.message;
+    else if (thrown) error = String(thrown);
+
+    let status: RunOutcome["status"] = "completed";
+    if (signal.aborted || stopReason === "aborted") {
+      status = "aborted";
+    } else if (error || stopReason === "error" || stopReason === "length" || !output) {
+      status = "failed";
+    }
     return {
       status,
       output,
       fullOutputPath,
-      error: error ?? (stopReason === "length" ? "Subagent reached the model output limit" : !output ? "Subagent returned no final text" : undefined),
+      error: error ?? (
+        stopReason === "length" ? "Subagent reached the model output limit"
+          : !output ? "Subagent returned no final text" : undefined
+      ),
       usage,
       startedAt,
       endedAt: Date.now(),
@@ -162,7 +171,29 @@ export class PiChildSession implements ChildSession {
   }
 }
 
-export function snapshotParent(ctx: ExtensionContext, settings: ParentSnapshot["settings"]): ParentSnapshot {
+export function snapshotParent(
+  ctx: ExtensionContext,
+  settings: ParentSnapshot["settings"],
+  launchToolCallId?: string,
+): ParentSnapshot {
+  let inheritedMessages: Message[] | undefined;
+  if (launchToolCallId !== undefined) {
+    const { messages } = ctx.sessionManager.buildSessionProjection();
+    const launchIndex = messages.findIndex((message) => message.role === "assistant" &&
+      message.content.some((part) => part.type === "toolCall" && part.id === launchToolCallId));
+    if (launchIndex < 0) throw new Error("Cannot inherit context: launch tool call is missing from the parent transcript");
+    // Exclude the whole launching batch, including any sibling results already recorded.
+    inheritedMessages = structuredClone(convertToLlm(messages.slice(0, launchIndex).filter((message) => message.role !== "system")));
+    // Parent usage and recovery state must not trigger compaction or retries in the child.
+    for (const message of inheritedMessages) {
+      if (message.role !== "assistant") continue;
+      message.usage = emptyUsage();
+      delete message.errorMessage;
+      if (message.stopReason === "length") {
+        message.stopReason = message.content.some((part) => part.type === "toolCall") ? "toolUse" : "stop";
+      }
+    }
+  }
   return {
     cwd: ctx.cwd,
     model: ctx.model,
@@ -171,29 +202,62 @@ export function snapshotParent(ctx: ExtensionContext, settings: ParentSnapshot["
     scopedModels: ctx.scopedModels,
     settings: structuredClone(settings),
     projectTrusted: ctx.isProjectTrusted(),
+    inheritedMessages,
   };
 }
 
 function resolveSkillPath(skill: string, profile: AgentProfile, cwd: string, agentDir: string): string | undefined {
-  const candidates = path.isAbsolute(skill)
-    ? [skill]
-    : skill.startsWith(".") || skill.includes("/")
-      ? [path.resolve(path.dirname(profile.filePath), skill), path.resolve(cwd, skill)]
-      : [
-          path.join(agentDir, "skills", skill, "SKILL.md"),
-          path.join(agentDir, "skills", `${skill}.md`),
-          path.join(os.homedir(), ".agents", "skills", skill, "SKILL.md"),
-        ];
+  if (path.isAbsolute(skill)) return fs.existsSync(skill) ? skill : undefined;
+  const candidates = skill.startsWith(".") || skill.includes("/")
+    ? [path.resolve(path.dirname(profile.filePath), skill), path.resolve(cwd, skill)]
+    : [
+        path.join(agentDir, "skills", skill, "SKILL.md"),
+        path.join(agentDir, "skills", `${skill}.md`),
+        path.join(os.homedir(), ".agents", "skills", skill, "SKILL.md"),
+      ];
   return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+export function resolveToolExtensionPaths(
+  profile: AgentProfile,
+  tools: readonly ToolInfo[],
+): string[] {
+  const available = tools.filter(
+    (tool) => tool.exposure !== "hidden" && !SUBAGENT_TOOLS.has(tool.name),
+  );
+  const names = new Set(available.map((tool) => tool.name));
+  const missing = profile.tools.filter((name) => !names.has(name));
+  if (missing.length) {
+    throw new Error(`${profile.filePath}: unavailable tool(s): ${missing.join(", ")}`);
+  }
+
+  const selected = new Set(profile.tools);
+  const extensionPaths = new Set<string>();
+  for (const tool of available) {
+    if (!selected.has(tool.name) || PI_BUILTIN_TOOLS.has(tool.name)) continue;
+    const source = tool.sourceInfo.path;
+    if (source.startsWith("<")) {
+      throw new Error(`${profile.filePath}: tool ${tool.name} is not provided by a loadable extension`);
+    }
+    extensionPaths.add(source);
+  }
+  return [...extensionPaths];
+}
+
+function resolvePromptVariables(prompt: string, cwd: string): string {
+  return prompt
+    .replaceAll("{{date}}", new Date().toISOString())
+    .replaceAll("{{cwd}}", cwd);
 }
 
 export async function createChildSession(
   profile: AgentProfile,
   parent: ParentSnapshot,
-  toolRegistry: ChildToolRegistry,
+  extensionPaths: string[],
 ): Promise<ChildSession> {
   const agentDir = getAgentDir();
   const modelRuntime = parentModelRuntime(parent.modelRegistry);
+  const systemPrompt = resolvePromptVariables(profile.systemPrompt, parent.cwd);
   const settingsManager = SettingsManager.inMemory(
     { ...parent.settings, cacheWarming: "off" },
     { projectTrusted: parent.projectTrusted },
@@ -210,9 +274,9 @@ export async function createChildSession(
     agentDir,
     settingsManager,
     noExtensions: true,
+    additionalExtensionPaths: extensionPaths,
     noPromptTemplates: true,
     noThemes: true,
-    noContextFiles: !profile.includeProjectContext,
     noSkills: selectedSkills.size === 0,
     additionalSkillPaths: [...skillPaths],
     skillsOverride: selectedSkills.size
@@ -221,8 +285,8 @@ export async function createChildSession(
           diagnostics: base.diagnostics,
         })
       : undefined,
-    systemPromptOverride: profile.preserveBaseInstruction ? undefined : () => profile.systemPrompt,
-    appendSystemPromptOverride: profile.preserveBaseInstruction ? (base) => [...base, profile.systemPrompt] : () => [],
+    systemPromptOverride: () => systemPrompt,
+    appendSystemPromptOverride: () => [],
   });
   await loader.reload();
   if (selectedSkills.size) {
@@ -237,10 +301,10 @@ export async function createChildSession(
 
   const model = resolveModel(profile, parent);
   if (!model) throw new Error("No model is selected for the subagent");
-  const customToolNames = profile.tools.filter((name) => !BUILTIN_TOOLS.has(name));
-  const customTools = await toolRegistry.create(customToolNames, parent.cwd);
   let session: AgentSession | undefined;
   try {
+    const sessionManager = SessionManager.inMemory(parent.cwd);
+    for (const message of parent.inheritedMessages ?? []) sessionManager.appendMessage(message);
     const result = await createAgentSession({
       cwd: parent.cwd,
       agentDir,
@@ -249,19 +313,14 @@ export async function createChildSession(
       thinkingLevel: (profile.thinking as ThinkingLevel | undefined) ?? parent.thinkingLevel,
       scopedModels: parent.scopedModels.map((entry) => ({ ...entry })),
       tools: [...profile.tools],
-      customTools,
       resourceLoader: loader,
-      sessionManager: SessionManager.inMemory(parent.cwd),
+      sessionManager,
       settingsManager,
     });
     session = result.session;
-    const allowed = new Set(profile.tools);
-    session.agent.beforeToolCall = async ({ toolCall }) => allowed.has(toolCall.name)
-      ? undefined
-      : { block: true, reason: `Tool "${toolCall.name}" is outside this subagent profile`, terminate: true };
     session.setSessionName(profile.name);
     await session.bindExtensions({});
-    return new PiChildSession(session);
+    return new PiChildSession(session, parent.inheritedMessages !== undefined);
   } catch (error) {
     session?.dispose();
     throw error;

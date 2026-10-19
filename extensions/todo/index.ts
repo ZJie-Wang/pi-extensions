@@ -12,66 +12,45 @@ import {
   progressIcon,
   progressSummary,
   reconstructTodoState,
-  snapshot,
-  todoMessage,
   type TodoDetails,
   type TodoItem,
   type TodoOperation,
 } from "./core.ts";
 
 const TOOL_NAME = "todo";
-const STATE_ENTRY_TYPE = "todo_state";
+const CONTEXT_ENTRY_TYPE = "todo";
 const WIDGET_ID = "todo";
+const MAX_VISIBLE_ITEMS = 9;
+const PROGRESS_BAR_WIDTH = 10;
+const STATUS_PRIORITY = { active: 0, pending: 1, done: 2 } as const;
 
 const TodoParams = Type.Object(
   {
-    action: StringEnum(["new", "update", "list", "clear"] as const, {
+    action: StringEnum(["set", "update"] as const, {
       description:
-        "Action: new creates or replaces the tracker and activates its first phase; update records the progress; list returns the tracker; clear removes it.",
+        "set creates or replaces the tracker and activates its first phase; update completes and/or activates phases.",
     }),
     items: Type.Optional(
-      Type.Array(
-        Type.String({
-          minLength: 1,
-          description: "Phase title.",
-        }),
-        {
-          minItems: 1,
-          description: "Ordered phase titles. Required for new.",
-        },
-      ),
-    ),
-    completedIds: Type.Optional(
-      Type.Array(Type.Integer({ minimum: 1 }), {
-        minItems: 1,
-        uniqueItems: true,
-        description:
-          "IDs completed. Update requires completedIds or activeId. Completing the active phase activates the next pending phase.",
+      Type.Array(Type.String(), {
+        description: "Ordered phase titles. Required for set.",
       }),
     ),
-    activeId: Type.Optional(
-      Type.Integer({
-        minimum: 1,
-        description: "ID of an unfinished phase to jump to manually.",
-      }),
-    ),
+    completeIds: Type.Optional(Type.Array(Type.Integer())),
+    activateIds: Type.Optional(Type.Array(Type.Integer())),
   },
   { additionalProperties: false },
 );
 
 const TodoOutput = Type.Object(
   {
-    action: StringEnum(["new", "update", "list", "clear"] as const),
     items: Type.Array(Type.Object({
-      id: Type.Integer({ minimum: 1 }),
-      title: Type.String({ minLength: 1 }),
+      id: Type.Integer(),
+      title: Type.String(),
       status: StringEnum(["pending", "active", "done"] as const),
     }, { additionalProperties: false })),
+    completedIds: Type.Optional(Type.Array(Type.Integer())),
+    activatedIds: Type.Optional(Type.Array(Type.Integer())),
     error: Type.Optional(Type.String()),
-    message: Type.Optional(Type.String()),
-    completedIds: Type.Optional(Type.Array(Type.Integer({ minimum: 1 }), { uniqueItems: true })),
-    activatedId: Type.Optional(Type.Integer({ minimum: 1 })),
-    cleared: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
 );
@@ -79,19 +58,11 @@ const TodoOutput = Type.Object(
 export default function (pi: ExtensionAPI) {
   let items: TodoItem[] = [];
 
-  const reconstructState = (ctx: ExtensionContext) => {
-    items = reconstructTodoState(ctx.sessionManager.getBranch()).items;
-    updateWidget(ctx);
-  };
-
-  const visibleWidgetItems = (limit: number) => {
-    if (items.length <= limit) return items;
-
-    const activeItems = items.filter((item) => item.status === "active");
-    const pendingItems = items.filter((item) => item.status === "pending");
-    const doneItems = items.filter((item) => item.status === "done");
-    const prioritized = [...activeItems, ...pendingItems, ...doneItems];
-    return prioritized.slice(0, limit);
+  const visibleWidgetItems = () => {
+    if (items.length <= MAX_VISIBLE_ITEMS) return items;
+    return [...items]
+      .sort((a, b) => STATUS_PRIORITY[a.status] - STATUS_PRIORITY[b.status])
+      .slice(0, MAX_VISIBLE_ITEMS);
   };
 
   const updateWidget = (ctx: ExtensionContext) => {
@@ -101,42 +72,60 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    const visible = visibleWidgetItems(9);
+    const total = items.length;
     const done = items.filter((item) => item.status === "done").length;
-    const remaining = items.length - visible.length;
-    const hiddenDone = done - visible.filter((item) => item.status === "done").length;
+    const visible = visibleWidgetItems();
+    const remaining = total - visible.length;
+    const visibleDone = visible.filter((item) => item.status === "done").length;
+    const hiddenDone = done - visibleDone;
     const hiddenOpen = remaining - hiddenDone;
-    const extra = [
+    const hiddenSummary = [
       hiddenOpen > 0 ? `${hiddenOpen} open` : undefined,
       hiddenDone > 0 ? `${hiddenDone} done` : undefined,
     ].filter(Boolean).join(", ");
-    const progressWidth = 10;
-    const filled = Math.round((done / items.length) * progressWidth);
-    const total = items.length;
+    const filled = Math.round((done / total) * PROGRESS_BAR_WIDTH);
 
     ctx.ui.setWidget(WIDGET_ID, (tui, theme) => {
-      let cachedLines: string[] | undefined;
-      let cacheWidth = -1;
+      let cache: { width: number; lines: string[] } | undefined;
       let pulseOn = true;
       const hasActiveItem = items.some((item) => item.status === "active");
       const pulseTimer = hasActiveItem
         ? setInterval(() => {
             pulseOn = !pulseOn;
-            cachedLines = undefined;
+            cache = undefined;
             tui.requestRender();
           }, 1000)
         : undefined;
       pulseTimer?.unref();
 
+      const itemMark = (item: TodoItem) => {
+        if (item.status === "done") return theme.fg("success", "✓");
+        if (item.status === "active") {
+          return pulseOn
+            ? theme.fg("warning", "●")
+            : theme.fg("muted", "○");
+        }
+        return theme.fg("dim", "○");
+      };
+      const itemLabel = (item: TodoItem) => {
+        if (item.status === "done") {
+          return theme.fg("dim", theme.strikethrough(item.title));
+        }
+        if (item.status === "active") {
+          return theme.fg("warning", theme.bold(item.title));
+        }
+        return theme.fg("muted", item.title);
+      };
+
       return {
         render: (width: number) => {
-          if (cachedLines && cacheWidth === width) return cachedLines;
+          if (cache?.width === width) return cache.lines;
 
           const lines: string[] = [];
           const inset = " ";
           const progressBar =
             theme.fg("success", "━".repeat(filled)) +
-            theme.fg("dim", "─".repeat(progressWidth - filled));
+            theme.fg("dim", "─".repeat(PROGRESS_BAR_WIDTH - filled));
           const headingIcon = theme.fg("toolTitle", done < total ? "●" : "✓");
           const heading = `${headingIcon} ${theme.fg("toolTitle", theme.bold("Todos"))} ${theme.fg(
             "muted",
@@ -146,27 +135,14 @@ export default function (pi: ExtensionAPI) {
 
           for (let index = 0; index < visible.length; index++) {
             const item = visible[index];
-            const isLastVisible =
-              index === visible.length - 1 && remaining === 0;
+            const isLastVisible = index === visible.length - 1 && remaining === 0;
             const branch = theme.fg("dim", isLastVisible ? "└─" : "├─");
-            const mark =
-              item.status === "done"
-                ? theme.fg("success", "✓")
-                : item.status === "active"
-                  ? pulseOn
-                    ? theme.fg("warning", "●")
-                    : theme.fg("muted", "○")
-                  : theme.fg("dim", "○");
+            const mark = itemMark(item);
             const id = theme.fg(
               item.status === "active" ? "warning" : "dim",
               `${item.id}.`,
             );
-            const label =
-              item.status === "done"
-                ? theme.fg("dim", theme.strikethrough(item.title))
-                : item.status === "active"
-                  ? theme.fg("warning", theme.bold(item.title))
-                  : theme.fg("muted", item.title);
+            const label = itemLabel(item);
             lines.push(
               truncateToWidth(
                 `${inset}${branch} ${mark} ${id} ${label}`,
@@ -178,18 +154,17 @@ export default function (pi: ExtensionAPI) {
           if (remaining > 0) {
             lines.push(
               truncateToWidth(
-                `${inset}${theme.fg("dim", "└─")} ${theme.fg("dim", `+${remaining} more${extra ? ` (${extra})` : ""}`)}`,
+                `${inset}${theme.fg("dim", "└─")} ${theme.fg("dim", `+${remaining} more${hiddenSummary ? ` (${hiddenSummary})` : ""}`)}`,
                 width,
               ),
             );
           }
 
-          cachedLines = lines;
-          cacheWidth = width;
+          cache = { width, lines };
           return lines;
         },
         invalidate: () => {
-          cachedLines = undefined;
+          cache = undefined;
         },
         dispose: () => {
           if (pulseTimer) clearInterval(pulseTimer);
@@ -198,23 +173,21 @@ export default function (pi: ExtensionAPI) {
     });
   };
 
-  const persistState = () => {
-    pi.appendEntry(STATE_ENTRY_TYPE, snapshot(items));
+  const reconstructState = (ctx: ExtensionContext) => {
+    items = reconstructTodoState(ctx.sessionManager.getBranch());
+    updateWidget(ctx);
   };
 
   const resultFromOperation = (operation: TodoOperation) => {
-    const { changed: _changed, schemaVersion, ...output } = operation;
-    const structuredContent = { ...output, items: snapshot(operation.items).items };
+    const { changed: _changed, message, ...details } = operation;
     return {
       content: [{
         type: "text" as const,
-        text: operation.action === "list" && !operation.error
-          ? listContent(operation.items)
-          : todoMessage(operation),
+        text: operation.error ? `Error: ${operation.error}` : message,
       }],
-      details: { schemaVersion, ...structuredContent } satisfies TodoDetails,
-      structuredContent,
-      isError: !!operation.error,
+      details,
+      structuredContent: details,
+      isError: Boolean(operation.error),
     };
   };
 
@@ -222,9 +195,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_tree", (_event, ctx) => reconstructState(ctx));
   pi.on("session_compact", (_event, ctx) => {
     if (items.length > 0) {
-      persistState();
       pi.sendMessage({
-        customType: STATE_ENTRY_TYPE,
+        customType: CONTEXT_ENTRY_TYPE,
         content: `Todo tracker:\n${listContent(items)}`,
         display: false,
       });
@@ -238,8 +210,7 @@ export default function (pi: ExtensionAPI) {
     description: "Track complex work in phases.",
     promptSnippet: "Track multi-phase progress",
     promptGuidelines: [
-      "Use todo for complex, multi-step work with at least three meaningfully coordinated phases. Skip it for simple tasks or when coordination adds no value.",
-      "Once a todo tracker is started, remember to update it promptly after each phase completes.",
+      "Use todo for complex work with 3+ meaningfully coordinated phases. Once the tracker exists, complete phases in real time.",
     ],
     parameters: TodoParams,
     outputSchema: TodoOutput,
@@ -255,22 +226,22 @@ export default function (pi: ExtensionAPI) {
     },
 
     renderCall(args, theme: Theme) {
-      const actionGlyph =
-        args.action === "new"
-          ? "+"
-          : args.action === "update"
-            ? "→"
-            : args.action === "list"
-              ? "?"
-              : "∅";
+      const actionGlyph = args.action === "set" ? "+" : "→";
       let text =
         theme.fg("toolTitle", theme.bold("todo ")) +
         theme.fg("muted", actionGlyph);
-      if (args.action === "new" && args.items) {
-        text += theme.fg("dim", ` ${args.items.length} phases`);
+      if (args.action === "set" && args.items !== undefined) {
+        text += theme.fg(
+          "dim",
+          args.items.length === 0 ? " clear" : ` ${args.items.length} phases`,
+        );
       }
-      if (args.action === "update" && args.completedIds?.length) {
-        text += theme.fg("dim", ` ${args.completedIds.length} completed`);
+      if (args.action === "update") {
+        const parts = [
+          args.completeIds?.length ? `${args.completeIds.length} completed` : undefined,
+          args.activateIds?.length ? `${args.activateIds.length} activated` : undefined,
+        ].filter(Boolean);
+        if (parts.length > 0) text += theme.fg("dim", ` ${parts.join(", ")}`);
       }
       return new Text(text, 0, 0);
     },
@@ -282,24 +253,18 @@ export default function (pi: ExtensionAPI) {
         return new Text(theme.fg("error", `✗ ${details.error}`), 0, 0);
       }
 
-      const completedIds = details.completedIds ?? [];
       if (details.items.length === 0) {
-        const emptyMessage =
-          completedIds.length > 0
-            ? theme.fg("success", "✓ All phases complete")
-            : theme.fg("dim", "No active todo tracker");
-        return new Text(emptyMessage, 0, 0);
+        const message = details.completedIds?.length
+          ? theme.fg("success", "✓ All phases complete")
+          : theme.fg("dim", "No active todo tracker");
+        return new Text(message, 0, 0);
       }
 
-      const icon = progressIcon(details.items, completedIds);
+      const icon = progressIcon(details.items);
       const iconColor =
         icon === "●" ? "warning" : icon === "✓" ? "success" : "dim";
-      const activated = details.activatedId === undefined
-        ? undefined : `#${details.activatedId} activated`;
-      let text = activated
-        ? `${theme.fg("muted", "→")} ${theme.fg("accent", activated)}`
-        : theme.fg(iconColor, `${icon} `) +
-          theme.fg("muted", progressSummary(details.items));
+      let text = theme.fg(iconColor, `${icon} `) +
+        theme.fg("muted", progressSummary(details.items));
 
       if (expanded) {
         for (const item of details.items) {
@@ -320,47 +285,6 @@ export default function (pi: ExtensionAPI) {
       }
 
       return new Text(text, 0, 0);
-    },
-  });
-
-  pi.registerCommand("todos", {
-    description: "Show or clear the todo tracker (/todos clear)",
-    handler: async (args, ctx) => {
-      if (args?.trim().toLowerCase() === "clear") {
-        items = [];
-        persistState();
-        updateWidget(ctx);
-        if (ctx.hasUI) ctx.ui.notify("Cleared todo tracker.", "info");
-        return;
-      }
-
-      updateWidget(ctx);
-      if (ctx.hasUI) {
-        const pending = items.filter((item) => item.status === "pending");
-        const active = items.filter((item) => item.status === "active");
-        const done = items.filter((item) => item.status === "done");
-        const lines: string[] = [];
-
-        if (active.length > 0) {
-          lines.push("── Active ──");
-          for (const item of active)
-            lines.push(`  ● ${item.id}. ${item.title}`);
-        }
-        if (pending.length > 0) {
-          lines.push("── Pending ──");
-          for (const item of pending)
-            lines.push(`  ○ ${item.id}. ${item.title}`);
-        }
-        if (done.length > 0) {
-          lines.push("── Done ──");
-          for (const item of done) lines.push(`  ✓ ${item.id}. ${item.title}`);
-        }
-
-        ctx.ui.notify(
-          lines.length > 0 ? lines.join("\n") : "No active todo tracker.",
-          "info",
-        );
-      }
     },
   });
 }

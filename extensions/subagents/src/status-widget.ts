@@ -13,13 +13,14 @@ export class SubagentStatusWidget implements Component {
     const status = getThreadStatus(this.getThreads());
     if (!status) return [];
     const theme = this.getTheme();
-    const groups: string[] = [];
-    for (const state of ["running", "queued"] as const) {
-      if (!status[state].length) continue;
-      const names = status[state].map((name) => name.replace(/\s+/g, " ").trim()).join(", ");
-      groups.push(`${state} ${names}`);
-    }
-    const heading = `${theme.fg("mdLink", "●")} ${theme.fg("mdLink", theme.bold("Subagents"))} ${theme.fg("muted", groups.join(" · "))}`;
+    const names = status.map((thread) => {
+      const color = thread.status === "running" || thread.status === "queued" ? "warning"
+        : thread.status === "completed" ? "success"
+        : thread.status === "failed" || thread.status === "aborted" ? "error"
+        : "muted";
+      return theme.fg(color, thread.id);
+    }).join(theme.fg("muted", ", "));
+    const heading = `${theme.fg("mdLink", "●")} ${theme.fg("mdLink", theme.bold("Subagents:"))} ${names}`;
     return [truncateToWidth(` ${heading}`, width)];
   }
 

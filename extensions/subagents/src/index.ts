@@ -1,5 +1,3 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -9,18 +7,17 @@ import type {
   Theme,
 } from "@earendil-works/pi-coding-agent";
 import {
-  DynamicBorder,
   getAgentDir,
   getMarkdownTheme,
 } from "@earendil-works/pi-coding-agent";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { createChildSession, snapshotParent } from "./child.ts";
+import { createChildSession, resolveToolExtensionPaths, snapshotParent } from "./child.ts";
 import {
   addUsage,
-  BUILTIN_TOOLS,
   capOutput,
+  capOutputWithArtifact,
   emptyUsage,
   formatDuration,
   formatUsage,
@@ -29,18 +26,15 @@ import {
 } from "./core.ts";
 import {
   getThreadStatus,
-  THREAD_NAME_PATTERN,
   type SubagentThread,
   ThreadManager,
 } from "./manager.ts";
 import { resolveProfileOverrides } from "./model-overrides.ts";
 import { ProfileStore } from "./profiles.ts";
 import { SubagentStatusWidget } from "./status-widget.ts";
-import { ChildToolRegistry } from "./tool-loader.ts";
 
-const EXTENSION_DIR = path.dirname(fileURLToPath(import.meta.url));
-const AGENTS_DIR = path.join(EXTENSION_DIR, "agents");
-const TOOLS_DIR = path.join(EXTENSION_DIR, "tools");
+const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const AGENTS_DIR = path.join(PACKAGE_ROOT, "agents");
 const MAX_CONCURRENCY = 4;
 const COMPLETION_TYPE = "subagents-complete";
 const WIDGET_KEY = "subagents";
@@ -66,19 +60,10 @@ function outcomeText(thread: SubagentThread, outcome: RunOutcome): string {
   const text = outcome.status === "completed"
     ? `${heading}\n\n${outcome.output}`
     : `${heading}\n\n${outcome.error ?? "Subagent did not complete"}${outcome.output ? `\n\nPartial output:\n${outcome.output}` : ""}`;
-  const capped = capOutput(text, outcome.fullOutputPath);
-  if (!outcome.fullOutputPath && capped !== text) {
-    try {
-      const directory = mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
-      const outputPath = path.join(directory, "output.txt");
-      writeFileSync(outputPath, text, { encoding: "utf8", mode: 0o600 });
-      outcome.fullOutputPath = outputPath;
-      return capOutput(text, outputPath);
-    } catch {
-      // Keep the capped result if the artifact cannot be written.
-    }
-  }
-  return capped;
+  if (outcome.fullOutputPath) return capOutput(text, outcome.fullOutputPath);
+  const capped = capOutputWithArtifact(text);
+  outcome.fullOutputPath = capped.fullOutputPath;
+  return capped.output;
 }
 
 function detailsFor(thread: SubagentThread, scheduled = false): ToolDetails {
@@ -90,7 +75,7 @@ function detailsFor(thread: SubagentThread, scheduled = false): ToolDetails {
     tools: thread.tools.map((tool) => ({ ...tool })),
     toolCount: thread.toolCount,
     lastMessage: thread.lastMessage,
-    prompt: thread.promptPreview,
+    prompt: thread.lastPrompt,
     startedAt: thread.current?.startedAt,
     scheduled,
     outcome: thread.lastOutcome,
@@ -134,6 +119,10 @@ function threadContainer(
   return { container, icon };
 }
 
+function elapsedText(startedAt: number | undefined, endedAt?: number): string {
+  return startedAt === undefined ? "" : formatDuration((endedAt ?? Date.now()) - startedAt);
+}
+
 function renderPrompt(
   container: Container,
   details: ToolDetails,
@@ -143,11 +132,6 @@ function renderPrompt(
   container.addChild(new Spacer(1));
   container.addChild(
     new Text(theme.fg("muted", theme.italic(details.prompt)), 0, 0),
-  );
-  container.addChild(
-    new DynamicBorder((text: string) =>
-      theme.fg("dim", text.replaceAll("─", "┄")),
-    ),
   );
   container.addChild(new Spacer(1));
 }
@@ -177,16 +161,13 @@ function renderThread(
   isPartial: boolean,
   context: ToolRenderContext,
   showName = true,
+  showPrompt = true,
 ) {
   const outcome = details.outcome;
   const status = isPartial ? details.state : (outcome?.status ?? details.state);
   const active = status === "running" || status === "queued";
   const { container, icon } = threadContainer(context, status, theme);
-  const elapsed = outcome
-    ? formatDuration(outcome.endedAt - outcome.startedAt)
-    : details.startedAt
-      ? formatDuration(Date.now() - details.startedAt)
-      : "";
+  const elapsed = elapsedText(outcome?.startedAt ?? details.startedAt, outcome?.endedAt);
   const stats = `${details.toolCount} tools${elapsed ? ` · ${elapsed}` : ""}`;
   const identity = showName
     ? `${theme.fg("toolTitle", theme.bold(details.threadId))} — `
@@ -194,7 +175,7 @@ function renderThread(
   container.addChild(
     new Text(`${icon} ${identity}${theme.fg("dim", stats)}`, 0, 0),
   );
-  if (expanded) renderPrompt(container, details, theme);
+  if (expanded && showPrompt) renderPrompt(container, details, theme);
   renderToolLines(container, details, theme);
 
   if (details.lastMessage && (active || !expanded || !outcome?.output)) {
@@ -212,11 +193,8 @@ function renderThread(
         }),
       );
     }
-    const usage = formatUsage(outcome.usage);
-    if (usage) {
-      container.addChild(new Spacer(1));
-      container.addChild(new Text(theme.fg("dim", usage), 0, 0));
-    }
+    container.addChild(new Spacer(1));
+    container.addChild(new Text(theme.fg("dim", formatUsage(outcome.usage)), 0, 0));
     if (outcome.error)
       container.addChild(
         new Text(
@@ -235,26 +213,15 @@ function renderLaunch(
   expanded: boolean,
 ) {
   const container = new Container();
+  const status = details.state === "queued" ? "queued" : "running in background";
   container.addChild(
     new Text(
-      `${theme.fg("accent", "↗")} ${theme.fg("toolTitle", theme.bold(details.threadId))} — ${theme.fg("dim", `scheduled · ${details.state}`)}`,
+      `${theme.fg("accent", "↗")} ${theme.fg("toolTitle", theme.bold(details.threadId))} — ${theme.fg("dim", status)}`,
       0,
       0,
     ),
   );
-  if (expanded) {
-    renderPrompt(container, details, theme);
-    container.addChild(
-      new Text(
-        theme.fg(
-          "muted",
-          "Live snapshot: subagent_control status · detailed result: subagent_control wait",
-        ),
-        0,
-        0,
-      ),
-    );
-  }
+  if (expanded) renderPrompt(container, details, theme);
   return container;
 }
 
@@ -264,20 +231,12 @@ function renderStatus(
   expanded: boolean,
   context: ToolRenderContext,
 ) {
-  const outcome = details.outcome;
-  const status =
-    details.state === "running" || details.state === "queued"
-      ? details.state
-      : (outcome?.status ?? details.state);
+  const status = details.state;
   const { container, icon } = threadContainer(context, status, theme);
-  const elapsed = outcome
-    ? formatDuration(outcome.endedAt - outcome.startedAt)
-    : details.startedAt
-      ? formatDuration(Date.now() - details.startedAt)
-      : "";
-  const current =
-    details.tools.find((tool) => tool.status === "running") ??
-    details.tools.at(-1);
+  const elapsed = elapsedText(details.startedAt);
+  const current = status === "idle"
+    ? undefined
+    : details.tools.find((tool) => tool.status === "running") ?? details.tools.at(-1);
   const activity = current
     ? `${current.tool}${current.args ? `: ${current.args}` : ""}`
     : details.activity;
@@ -290,9 +249,7 @@ function renderStatus(
 }
 
 export default function subagentsExtension(pi: ExtensionAPI): void {
-  const toolRegistry = new ChildToolRegistry(TOOLS_DIR);
-  const knownTools = () => new Set([...BUILTIN_TOOLS, ...toolRegistry.names()]);
-  const profiles = new ProfileStore(AGENTS_DIR, knownTools());
+  const profiles = new ProfileStore(AGENTS_DIR);
   let currentContext: ExtensionContext | undefined;
   let statusTimer: NodeJS.Timeout | undefined;
   let lastStatus: string | undefined;
@@ -355,44 +312,30 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
   });
 
   const refreshProfiles = (ctx: ExtensionContext): boolean => {
-    try {
-      const toolsChanged = toolRegistry.refresh();
-      const refresh = profiles.refresh(knownTools());
-      if (refresh.warning) ctx.ui.notify(refresh.warning, "warning");
-      return toolsChanged || refresh.changed;
-    } catch (error) {
-      ctx.ui.notify(
-        `Subagent tools were not refreshed. ${error instanceof Error ? error.message : String(error)}`,
-        "warning",
-      );
-      return false;
-    }
+    const refresh = profiles.refresh();
+    if (refresh.warning) ctx.ui.notify(refresh.warning, "warning");
+    return refresh.changed;
   };
 
   const SubagentRunParams = () =>
     Type.Object({
-      action: StringEnum(["new", "continue"] as const, {
-        description: "Create a new thread or send another task to an idle thread.",
-      }),
+      action: StringEnum(["new", "continue"] as const),
       profile: Type.Optional(
-        StringEnum(
-          profiles.list().map((item) => item.name),
-          {
-            description: `Required for new; omit for continue. Available:\n${profiles.describe()}`,
-          },
-        ),
+        StringEnum(profiles.names(), {
+          description: `Required for new; omit for continue. Available:\n${profiles.describe()}`,
+        }),
       ),
       thread: Type.String({
         description:
           "Unique and human-readable name, like Tom, Jerry, slop_hunter, etc.",
-        minLength: 1,
-        maxLength: 32,
-        pattern: THREAD_NAME_PATTERN,
       }),
       prompt: Type.String({
         description: "Natural-language message for the child.",
-        minLength: 1,
       }),
+      inheritContext: Type.Optional(Type.Boolean({
+        description: "Inherit the parent's active conversation when creating new threads.",
+        default: false,
+      })),
     }, { additionalProperties: false });
 
   const registerSubagentRunTool = () =>
@@ -406,13 +349,14 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
         "Schedule substantial independent work in named subagent threads",
       promptGuidelines: [
         "Use subagents for tasks that benefit from specialized focus, parallel execution, or keeping noisy exploration out of the main context. Skip them for simple I/O or small tasks.",
-        "New subagent threads start without the parent's transcript. Provide a self-contained initial prompt with the context the child needs. Continue an existing thread when its prior context matters. Keep work in the parent when passing the necessary context would be cumbersome.",
+        "Give the child a clear task. Set inheritContext to true when the child needs the earlier parent conversation as context; otherwise include the necessary context in the prompt. Continue an existing thread when its history matters.",
       ],
       parameters: SubagentRunParams(),
-      async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      async execute(toolCallId, params, signal, _onUpdate, ctx) {
         signal?.throwIfAborted();
         currentContext = ctx;
-        if (refreshProfiles(ctx)) registerSubagentRunTool();
+        refreshProfiles(ctx);
+        signal?.throwIfAborted();
         if (!params.prompt.trim()) throw new Error("prompt must be non-empty");
         let thread: SubagentThread;
         if (params.action === "new") {
@@ -420,25 +364,24 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
           const profile = profiles.get(params.profile);
           if (!profile)
             throw new Error(
-              `Unknown subagent profile "${params.profile}". Available: ${profiles
-                .list()
-                .map((item) => item.name)
-                .join(", ")}`,
+              `Unknown subagent profile "${params.profile}". Available: ${profiles.names().join(", ")}`,
             );
-          const parent = snapshotParent(ctx, pi.getSettings());
+          const parent = snapshotParent(ctx, pi.getSettings(), params.inheritContext ? toolCallId : undefined);
           const profileSnapshot = resolveProfileOverrides(
             profile,
             parent.model,
             path.join(getAgentDir(), "subagents.json"),
           );
+          const extensionPaths = resolveToolExtensionPaths(profileSnapshot, pi.getAllTools());
           thread = manager.create(
             profileSnapshot,
             params.prompt,
-            () => createChildSession(profileSnapshot, parent, toolRegistry),
+            () => createChildSession(profileSnapshot, parent, extensionPaths),
             params.thread,
           );
         } else {
           if (params.profile) throw new Error("omit profile for continue");
+          if (params.inheritContext !== undefined) throw new Error("omit inheritContext for continue");
           thread = manager.continue(params.thread, params.prompt);
         }
         return {
@@ -451,7 +394,7 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
       },
       renderCall(args, theme) {
         return new Text(
-          `${theme.fg("toolTitle", theme.bold("subagent_run"))} ${args.action === "continue" ? `${theme.fg("dim", "continue")} ` : ""}${theme.fg("accent", args.thread ?? "thread")}${args.profile ? theme.fg("dim", ` (${args.profile})`) : ""} ${theme.fg("dim", preview(args.prompt ?? "", 70))}`,
+          `${theme.fg("toolTitle", theme.bold("subagent_run"))} ${theme.fg("accent", args.thread ?? "thread")}${args.profile ? theme.fg("dim", ` (${args.profile})`) : ""} ${theme.fg("dim", preview(args.prompt ?? "", 70))}`,
           0,
           0,
         );
@@ -467,7 +410,6 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
             options.expanded,
             options.isPartial,
             context,
-            true,
           );
         const text =
           result.content.find((part) => part.type === "text")?.text ?? "";
@@ -477,17 +419,14 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
 
   const ControlParams = Type.Object({
     thread: Type.String({
-      description: "Existing thread name; case-insensitive.",
-      minLength: 1,
-      maxLength: 32,
-      pattern: THREAD_NAME_PATTERN,
+      description: "Existing thread name.",
     }),
     action: StringEnum(["status", "wait", "steer", "stop"] as const, {
       description:
         "status returns state; wait joins the child; steer injects message; stop aborts the thread",
     }),
     message: Type.Optional(
-      Type.String({ description: "Required only for steer", minLength: 1 }),
+      Type.String({ description: "Required only for steer" }),
     ),
   }, { additionalProperties: false });
 
@@ -506,15 +445,13 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
         throw new Error("message is only accepted for steer");
       const thread = manager.status(params.thread);
       if (params.action === "status") {
-        const text = thread.current
-          ? `${thread.id}: ${thread.state} · ${thread.activity}`
-          : thread.lastOutcome
-            ? outcomeText(thread, thread.lastOutcome)
-            : `${thread.id}: idle`;
+        const state = thread.activity
+          ? `${thread.state} · ${thread.activity}`
+          : thread.state;
+        const { outcome: _outcome, ...details } = detailsFor(thread);
         return {
-          content: [{ type: "text", text }],
-          details: detailsFor(thread),
-          isError: !thread.current && thread.lastOutcome?.status === "failed",
+          content: [{ type: "text", text: `${thread.id}: ${state}` }],
+          details: { ...details, lastMessage: "" },
         };
       }
       if (params.action === "wait") {
@@ -561,6 +498,7 @@ export default function subagentsExtension(pi: ExtensionAPI): void {
           options.expanded,
           options.isPartial,
           context,
+          false,
           false,
         );
       const text =

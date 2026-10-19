@@ -46,7 +46,7 @@ export interface SubagentThread {
   tools: ToolActivity[];
   toolCount: number;
   lastMessage: string;
-  promptPreview: string;
+  lastPrompt: string;
 }
 
 export interface ManagerCallbacks {
@@ -54,8 +54,7 @@ export interface ManagerCallbacks {
   onComplete?: (thread: SubagentThread, outcome: RunOutcome) => void;
 }
 
-export const THREAD_NAME_PATTERN = "^[A-Za-z][A-Za-z0-9 _-]{0,31}$";
-const THREAD_NAME = new RegExp(THREAD_NAME_PATTERN);
+const THREAD_NAME = /^[A-Za-z][A-Za-z0-9 _-]{0,31}$/;
 
 function abortedOutcome(message: string, startedAt = Date.now()): RunOutcome {
   return { status: "aborted", output: "", error: message, usage: emptyUsage(), startedAt, endedAt: Date.now() };
@@ -108,9 +107,8 @@ export class ThreadManager {
       tools: [],
       toolCount: 0,
       lastMessage: "",
-      promptPreview: prompt,
+      lastPrompt: prompt,
     };
-    this.threads.set(this.key(id), thread);
     this.enqueue(thread, prompt);
     return thread;
   }
@@ -125,7 +123,7 @@ export class ThreadManager {
   }
 
   list(): SubagentThread[] {
-    return [...this.threads.values()];
+    return [...this.threads.values()].reverse();
   }
 
   takeUsage(): UsageSummary | undefined {
@@ -236,7 +234,11 @@ export class ThreadManager {
     thread.tools = [];
     thread.toolCount = 0;
     thread.lastMessage = "";
-    thread.promptPreview = prompt;
+    thread.lastPrompt = prompt;
+    // Map insertion order tracks the latest create/continue request.
+    const key = this.key(thread.id);
+    this.threads.delete(key);
+    this.threads.set(key, thread);
     this.queue.push(thread);
     this.emitUpdate(thread, run);
     this.drain();
@@ -292,7 +294,7 @@ export class ThreadManager {
 
   private settle(thread: SubagentThread, run: RunRecord, outcome: RunOutcome): void {
     if (thread.current !== run) return;
-    const notify = run.updateListeners.size === 0 && !this.shutdownPromise;
+    const notifyParent = run.updateListeners.size === 0 && !this.shutdownPromise;
     thread.current = undefined;
     thread.state = "idle";
     thread.lastOutcome = outcome;
@@ -301,7 +303,7 @@ export class ThreadManager {
     addUsage(this.pendingUsage, outcome.usage);
     run.resolve(outcome);
     this.emitUpdate(thread, run);
-    if (notify) observe(() => this.callbacks.onComplete?.(thread, outcome));
+    if (notifyParent) observe(() => this.callbacks.onComplete?.(thread, outcome));
   }
 
   private makeId(requestedName: string): string {
@@ -319,16 +321,14 @@ export class ThreadManager {
 }
 
 export interface ThreadStatus {
-  running: string[];
-  queued: string[];
+  id: string;
+  status: ThreadState | RunOutcome["status"];
 }
 
-export function getThreadStatus(threads: readonly SubagentThread[]): ThreadStatus | undefined {
-  const running: string[] = [];
-  const queued: string[] = [];
-  for (const thread of threads) {
-    if (thread.state === "running") running.push(thread.id);
-    else if (thread.state === "queued") queued.push(thread.id);
-  }
-  return running.length || queued.length ? { running, queued } : undefined;
+export function getThreadStatus(threads: readonly SubagentThread[]): ThreadStatus[] | undefined {
+  if (!threads.length) return undefined;
+  return threads.map((thread) => ({
+    id: thread.id,
+    status: thread.state === "idle" ? thread.lastOutcome?.status ?? "idle" : thread.state,
+  }));
 }

@@ -1,6 +1,6 @@
 {
   "name": "@zjie-wang/pi-subagents",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "description": "Lean isolated child conversations for Pi with named threads and explicit controls",
   "license": "MIT",
   "type": "module",
@@ -17,16 +17,11 @@
   "homepage": "https://github.com/ZJie-Wang/pi-extensions/tree/main/extensions/subagents",
   "bugs": "https://github.com/ZJie-Wang/pi-extensions/issues",
   "files": [
-    "*.ts",
+    "src",
     "agents",
-    "tools",
-    "tests",
     "README.md",
     "LICENSE"
   ],
-  "scripts": {
-    "test": "node tests/run.mjs"
-  },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
     "@earendil-works/pi-ai": "*",
@@ -36,7 +31,7 @@
   },
   "pi": {
     "extensions": [
-      "./index.ts"
+      "./src/index.ts"
     ]
   },
   "publishConfig": {

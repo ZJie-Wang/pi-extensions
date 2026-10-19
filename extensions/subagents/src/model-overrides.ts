@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
-import { type AgentProfile, THINKING_LEVELS } from "./core.ts";
+import { type AgentProfile, RESOURCE_NAME_PATTERN, THINKING_LEVELS } from "./core.ts";
 
-const PROFILE_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
 type Override = { model?: string; thinking?: string };
 type ParentModels = Record<string, Record<string, Override>>;
 
@@ -28,7 +27,7 @@ function validateConfig(input: unknown, configPath: string): ParentModels {
     const profiles = object(value, location);
     for (const [name, value] of Object.entries(profiles)) {
       const profileLocation = `${location}[${JSON.stringify(name)}]`;
-      if (!PROFILE_NAME.test(name)) fail(`${profileLocation}: invalid profile name`);
+      if (!RESOURCE_NAME_PATTERN.test(name)) fail(`${profileLocation}: invalid profile name`);
       const override = object(value, profileLocation);
       if (!Object.keys(override).length) fail(`${profileLocation}: expected model or thinking`);
       for (const [field, value] of Object.entries(override)) {

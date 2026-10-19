@@ -1,10 +1,13 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Usage } from "@earendil-works/pi-ai/compat";
 
-export const BUILTIN_TOOLS = new Set(["read", "grep", "find", "ls", "write", "edit", "bash"]);
-export const MAX_OUTPUT_BYTES = 50 * 1024;
-export const MAX_OUTPUT_LINES = 2_000;
+export const SUBAGENT_TOOLS = new Set(["subagent_run", "subagent_control"]);
+const MAX_OUTPUT_BYTES = 50 * 1024;
+const MAX_OUTPUT_LINES = 2_000;
 
-const AGENT_NAME = /^[a-z][a-z0-9_-]{0,63}$/;
+export const RESOURCE_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 export const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 export interface AgentProfile {
@@ -14,8 +17,6 @@ export interface AgentProfile {
   skills: string[];
   model?: string;
   thinking?: string;
-  preserveBaseInstruction: boolean;
-  includeProjectContext: boolean;
   systemPrompt: string;
   filePath: string;
 }
@@ -77,38 +78,29 @@ function inheritedString(value: unknown, field: string): string | undefined {
   return value.trim();
 }
 
-function booleanValue(value: unknown, field: string, fallback: boolean): boolean {
-  if (value === undefined || value === null || value === "") return fallback;
-  if (value === true || value === "true") return true;
-  if (value === false || value === "false") return false;
-  throw new Error(`${field}: expected true or false`);
-}
-
 export function normalizeProfile(
   input: Record<string, unknown>,
   body: string,
   filePath: string,
-  knownTools: ReadonlySet<string> = BUILTIN_TOOLS,
 ): AgentProfile {
   const fail = (message: string): never => { throw new Error(`${filePath}: ${message}`); };
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name) fail("name is required");
-  if (!AGENT_NAME.test(name)) fail("name must start with a lowercase letter and contain only lowercase letters, numbers, _ or -");
+  if (!RESOURCE_NAME_PATTERN.test(name)) fail("name must start with a lowercase letter and contain only lowercase letters, numbers, _ or -");
   const description = typeof input.description === "string" ? input.description.trim() : "";
   if (!description) fail("description is required");
 
   const tools = parseStringList(input.tools, "tools");
-  const nested = tools.filter((tool) => tool === "subagent_run" || tool === "subagent_control");
-  if (nested.length) fail("child agents cannot receive subagent orchestration tools");
-  const unknown = tools.filter((tool) => !knownTools.has(tool));
-  if (unknown.length) fail(`unknown tool(s): ${unknown.join(", ")}`);
+  const subagentTools = tools.filter((tool) => SUBAGENT_TOOLS.has(tool));
+  if (subagentTools.length) fail(`child agents cannot receive subagent orchestration tools: ${subagentTools.join(", ")}`);
 
   const skills = parseStringList(input.skills, "skills");
   if (skills.length && !tools.includes("read")) fail("profiles with skills must include read");
   const model = inheritedString(input.model, "model");
   const thinking = inheritedString(input.thinking, "thinking");
   if (thinking && !THINKING_LEVELS.has(thinking)) fail(`invalid thinking level: ${thinking}`);
-  if (!body.trim()) fail("profile instructions are empty");
+  const systemPrompt = body.trim();
+  if (!systemPrompt) fail("profile instructions are empty");
 
   return {
     name,
@@ -117,9 +109,7 @@ export function normalizeProfile(
     skills,
     model,
     thinking,
-    preserveBaseInstruction: booleanValue(input.preserveBaseInstruction, "preserveBaseInstruction", true),
-    includeProjectContext: booleanValue(input.includeProjectContext, "includeProjectContext", true),
-    systemPrompt: body.trim(),
+    systemPrompt,
     filePath,
   };
 }
@@ -142,20 +132,43 @@ export function capOutput(text: string, fullOutputPath?: string): string {
   return utf8Prefix(lineLimited, MAX_OUTPUT_BYTES - Buffer.byteLength(notice, "utf8")) + notice;
 }
 
+function writeOutputArtifact(text: string): string | undefined {
+  try {
+    const directory = mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
+    const outputPath = path.join(directory, "output.txt");
+    writeFileSync(outputPath, text, { encoding: "utf8", mode: 0o600 });
+    return outputPath;
+  } catch {
+    return undefined;
+  }
+}
+
+export function capOutputWithArtifact(text: string): { output: string; fullOutputPath?: string } {
+  const output = capOutput(text);
+  if (output === text) return { output };
+  const fullOutputPath = writeOutputArtifact(text);
+  return { output: capOutput(text, fullOutputPath), fullOutputPath };
+}
+
 export function preview(text: string, width = 60): string {
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length <= width ? flat : `${flat.slice(0, Math.max(1, width - 1))}…`;
 }
 
-export function toolArgsPreview(toolName: string, args: any): string {
-  if (toolName === "web" && args?.program) {
-    const argv = Array.isArray(args.args) ? args.args.map(String).join(" ") : "";
-    return preview([args.program, argv].filter(Boolean).join(" "), 140);
-  }
-  const value = args?.command ?? args?.path ?? args?.query ?? args?.pattern ?? args?.url;
-  if (value !== undefined) return preview(String(value), 140);
-  if (args?.program) return preview(String(args.program), 140);
-  return preview(JSON.stringify(args ?? {}), 140);
+function primaryArg(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const values = Object.values(args as Record<string, unknown>);
+  const list = values.find((value): value is string[] =>
+    Array.isArray(value) && value.length > 0 && value.every((entry) => typeof entry === "string"));
+  if (list) return list.join(", ");
+  return values.find((value): value is string => typeof value === "string" && value.trim() !== "");
+}
+
+export function toolArgsPreview(args: unknown): string {
+  const value = primaryArg(args);
+  if (value !== undefined) return preview(value, 140);
+  const json = JSON.stringify(args ?? {});
+  return json === "{}" ? "" : preview(json, 140);
 }
 
 export function formatDuration(ms: number): string {

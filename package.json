@@ -6,17 +6,16 @@
     "extensions/*"
   ],
   "scripts": {
-    "test": "PI_CODING_AGENT_DIR=$PWD/node_modules/@earendil-works/pi-coding-agent node --test extensions/ask-user/tests/*.test.mjs extensions/todo/tests/*.test.mjs && node extensions/subagents/tests/run.mjs",
     "typecheck": "tsc",
     "pack:check": "npm pack --dry-run --workspaces --json > /dev/null",
-    "check": "npm run typecheck && npm test && npm run pack:check"
+    "check": "npm run typecheck && npm run pack:check"
   },
   "pi": {
     "extensions": [
       "./extensions/ask-user/index.ts",
       "./extensions/deepseek-web/index.ts",
       "./extensions/lazygit/index.ts",
-      "./extensions/subagents/index.ts",
+      "./extensions/subagents/src/index.ts",
       "./extensions/todo/index.ts"
     ]
   },

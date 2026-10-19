@@ -17,13 +17,13 @@ The extension registers two tools for the parent agent.
 Start a named thread with `action: "new"` and a profile:
 
 ```json
-{"action":"new","profile":"researcher","thread":"Dario","prompt":"Investigate why Anthropic banned my account"}
+{"action":"new","profile":"searcher","thread":"Dario","prompt":"Investigate why Anthropic banned my account"}
 ```
 
 Continue the same child conversation once it is idle, using `action: "continue"` and omitting `profile`:
 
 ```json
-{"action":"continue","thread":"Dario","prompt":"What is the ToS? Explain more about the reasons you mentioned."}
+{"action":"continue","thread":"Dario","prompt":"?"}
 ```
 
 ### `subagent_control`
@@ -31,11 +31,11 @@ Continue the same child conversation once it is idle, using `action: "continue"`
 ```json
 {"thread":"overengineering_hunter","action":"status"}
 {"thread":"overengineering_hunter","action":"wait"}
-{"thread":"overengineering_hunter","action":"steer","message":"Focus only on correctness."}
+{"thread":"overengineering_hunter","action":"steer","message":"Scan one more dir"}
 {"thread":"overengineering_hunter","action":"stop"}
 ```
 
-- `status` returns immediately and includes the latest result when settled.
+- `status` returns immediately with the thread's state and activity.
 - `wait` joins the current run. Cancelling a wait leaves the child running.
 - `steer` queues direction after the child’s current tool batch.
 - `stop` removes queued work or aborts a running child, keeping the thread.
@@ -52,8 +52,6 @@ tools: [read, grep, find, ls]
 skills: []
 model: inherit
 thinking: low
-preserveBaseInstruction: false
-includeProjectContext: true
 ---
 
 Profile instructions...
@@ -63,74 +61,42 @@ Profile instructions...
 |---|---|
 | `name` | Unique lowercase profile identifier |
 | `description` | Purpose shown in the `subagent_run` schema |
-| `tools` | Strict child tool allowlist |
-| `skills` | Optional Pi skills; profiles using skills must include `read` |
+| `tools` | Strict allowlist of tools available |
+| `skills` | Optional Pi skills; profiles using skills must also have `read` |
 | `model` | `inherit`, an exact model ID, or `provider/model` |
 | `thinking` | `inherit`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max` |
-| `preserveBaseInstruction` | Append profile instructions to Pi’s base prompt when true; replace it when false |
-| `includeProjectContext` | Load `AGENTS.md` and other project context files when true; exclude them when false |
 
-Profiles are checked before parent turns and launches. Valid edits affect new threads without `/reload`; existing threads keep their snapshot.
+- Every child uses its profile instructions in place of Pi's base prompt.
+- All children load context files such as `AGENTS.md` through Pi's normal discovery.
+- The tool allowlist rejects  `subagent_run` and `subagent_control` to prevent recursive orchestration.
+- Profile instructions support `{{date}}` and `{{cwd}}`. They are resolved when the child session starts.
 
 ### Parent-model overrides
 
-Use `~/.pi/agent/subagents.json` to override a profile's model or thinking level for a matching parent model.
+Use `~/.pi/agent/subagents.json` to override a profile's model or thinking level for a matching parent model. You need to use the complete id for the model, for example:
 
 ```json
 {
   "parentModels": {
-    "provider/model-a": {
-      "worker": { "model": "provider/model-b", "thinking": "high" }
+    "openai-codex/gpt-6-astra": {
+      "scout": { "model": "openai-codex/gpt-6-luna", "thinking": "low" }
     },
-    "provider/model-c": {
-      "worker": { "model": "provider/model-d" }
+    "zai-coding-cn/glm-5.3-flash": {
+      "reviewer": { "model": "zai-coding-cn/glm-5.3", "thinking": "max" }
     }
   }
 }
 ```
 
-Parent selectors match exact `provider/model` or model IDs; a qualified selector takes precedence for the whole rule. Unmatched parents or profiles use the profile frontmatter. Omitted fields keep their profile values; `"inherit"` uses the parent's value.
-
-## Child tool modules
-
-Built-ins (`read`, `grep`, `find`, `ls`, `write`, `edit`, and `bash`) come from Pi. Extension-specific child tools live in [`tools/`](./tools).
-
-Each `tools/<name>.ts` file default-exports a factory receiving the child working directory:
-
-```ts
-import { Type } from "typebox";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-
-export default function createTool(cwd: string): ToolDefinition {
-  return {
-    name: "example", // must match example.ts
-    label: "Example",
-    description: "Describe the capability and its safety boundary.",
-    parameters: Type.Object({ input: Type.String() }),
-    async execute(_id, params, signal, onUpdate) {
-      return {
-        content: [{ type: "text", text: `${cwd}: ${params.input}` }],
-        details: {},
-      };
-    },
-  };
-}
-```
-
-Add `example` to a profile’s `tools` list to expose it to new threads using that profile. Modules are discovered by filename and imported when requested by a new thread.
-
 ## Out-of-the-box agents
 
-| Agent | Tools | Purpose |
-|---|---|---|
-| `scout` | `read`, `grep`, `find`, `ls` | Read-only code exploration |
-| `reviewer` | `read`, `grep`, `find`, `ls` | Read-only review |
-| `researcher` | `web` | System date and guarded Tavily/curl retrieval |
-| `worker` | `read`, `grep`, `find`, `ls`, `write`, `edit`, `bash` | Scoped implementation |
+| Agent | Tools |
+|---|---|
+| `scout` | `read`, `grep`, `find`, `ls` |
+| `reviewer` | `read`, `grep`, `find`, `ls` |
+| `worker` | `read`, `grep`, `find`, `ls`, `write`, `edit`, `bash` |
 
-Read-only means the child is not given mutation tools. This is a capability boundary, not an operating-system sandbox.
-
-## What the model sees
+## What the (main) agent sees
 
 ### `subagent_run`
 
@@ -147,25 +113,25 @@ Read-only means the child is not given mutation tools. This is a capability boun
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["new", "continue"],
-        "description": "Create a new thread or send another task to an idle thread."
+        "enum": ["new", "continue"]
       },
       "profile": {
         "type": "string",
-        "enum": ["researcher", "reviewer", "scout", "worker"],
-        "description": "Required for new; omit for continue. Available:\n${profiles.describe()}"
+        "enum": ["reviewer", "scout", "worker"],
+        "description": "Required for new; omit for continue. Available:\n- reviewer: Assess work against stated requirements and check code quality; use for essential review gates.\n- scout: Explore massive codebases, locate evidence in noisy environments, and return brief findings.\n- worker: Implement disjoint, well-scoped changes and return a concise, verifiable integration summary."
       },
       "thread": {
         "type": "string",
-        "description": "Unique and human-readable name, like Tom, Jerry, slop_hunter, etc.",
-        "minLength": 1,
-        "maxLength": 32,
-        "pattern": "^[A-Za-z][A-Za-z0-9 _-]{0,31}$"
+        "description": "Unique and human-readable name, like Tom, Jerry, slop_hunter, etc."
       },
       "prompt": {
         "type": "string",
-        "description": "Natural-language message for the child.",
-        "minLength": 1
+        "description": "Natural-language message for the child."
+      },
+      "inheritContext": {
+        "type": "boolean",
+        "description": "Inherit the parent's active conversation when creating new threads.",
+        "default": false
       }
     }
   }
@@ -180,7 +146,7 @@ Available tools:
 
 Guidelines:
 - Use subagents for tasks that benefit from specialized focus, parallel execution, or keeping noisy exploration out of the main context. Skip them for simple I/O or small tasks.
-- New subagent threads start without the parent's transcript. Provide a self-contained initial prompt with the context the child needs. Continue an existing thread when its prior context matters. Keep work in the parent when passing the necessary context would be cumbersome.
+- Give the child a clear task. Set inheritContext to true when the child needs the earlier parent conversation as context; otherwise include the necessary context in the prompt. Continue an existing thread when its history matters.
 ```
 
 ### `subagent_control`
@@ -198,10 +164,7 @@ Guidelines:
     "properties": {
       "thread": {
         "type": "string",
-        "description": "Existing thread name; case-insensitive.",
-        "minLength": 1,
-        "maxLength": 32,
-        "pattern": "^[A-Za-z][A-Za-z0-9 _-]{0,31}$"
+        "description": "Existing thread name."
       },
       "action": {
         "type": "string",
@@ -210,8 +173,7 @@ Guidelines:
       },
       "message": {
         "type": "string",
-        "description": "Required only for steer",
-        "minLength": 1
+        "description": "Required only for steer"
       }
     }
   }

@@ -1,7 +1,7 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 
 export type TodoStatus = "pending" | "active" | "done";
-export type TodoAction = "new" | "update" | "clear" | "list";
+export type TodoAction = "set" | "update";
 
 export type TodoItem = {
   id: number;
@@ -10,206 +10,159 @@ export type TodoItem = {
 };
 
 export interface TodoDetails {
-  schemaVersion: 2;
-  action: TodoAction;
   items: TodoItem[];
-  error?: string;
-  message?: string;
   completedIds?: number[];
-  activatedId?: number;
-  cleared?: boolean;
-}
-
-export interface TodoState {
-  schemaVersion: 2;
-  items: TodoItem[];
+  activatedIds?: number[];
+  error?: string;
 }
 
 export interface TodoParams {
   action: TodoAction;
   items?: string[];
-  completedIds?: number[];
-  activeId?: number;
+  completeIds?: number[];
+  activateIds?: number[];
 }
 
 export interface TodoOperation extends TodoDetails {
   changed: boolean;
+  message: string;
 }
-
-export const snapshot = (items: TodoItem[]): TodoState => ({
-  schemaVersion: 2,
-  items: items.map((item) => ({ ...item })),
-});
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-const readState = (value: unknown): TodoState | undefined => {
-  if (!isObject(value) || value.schemaVersion !== 2 || !Array.isArray(value.items)) return;
-  const items: TodoItem[] = [];
-  const seen = new Set<number>();
-  let hasActive = false;
-  for (const item of value.items) {
-    if (
-      !isObject(item) ||
-      typeof item.id !== "number" || !Number.isInteger(item.id) || item.id < 1 ||
-      typeof item.title !== "string" || !item.title.trim() ||
-      (item.status !== "pending" && item.status !== "active" && item.status !== "done") ||
-      seen.has(item.id) || (item.status === "active" && hasActive)
-    ) return;
-    seen.add(item.id);
-    if (item.status === "active") hasActive = true;
-    items.push({ id: item.id, title: item.title.trim(), status: item.status });
-  }
-  return { schemaVersion: 2, items };
+const readItem = (value: unknown): TodoItem | undefined => {
+  if (!isObject(value)) return;
+  const { id, title, status } = value;
+  if (typeof id !== "number" || !Number.isInteger(id) || id < 1) return;
+  if (typeof title !== "string" || !title.trim()) return;
+  if (status !== "pending" && status !== "active" && status !== "done") return;
+  return { id, title: title.trim(), status };
 };
 
-export const reconstructTodoState = (branch: SessionEntry[]): TodoState => {
+const readItems = (value: unknown): TodoItem[] | undefined => {
+  if (!isObject(value) || !Array.isArray(value.items)) return;
+  const items: TodoItem[] = [];
+  const seen = new Set<number>();
+  for (const raw of value.items) {
+    const item = readItem(raw);
+    if (!item || seen.has(item.id)) return;
+    seen.add(item.id);
+    items.push(item);
+  }
+  return items;
+};
+
+export const reconstructTodoState = (branch: SessionEntry[]): TodoItem[] => {
   for (let i = branch.length - 1; i >= 0; i--) {
     const entry = branch[i];
-    let value: unknown;
-    if (entry.type === "custom" && entry.customType === "todo_state") {
-      value = entry.data;
-    } else if (
-      entry.type === "message" &&
-      entry.message.role === "toolResult" && entry.message.toolName === "todo"
-    ) {
-      value = entry.message.details;
-    } else {
-      continue;
-    }
-    const state = readState(value);
-    if (state) return state;
+    if (
+      entry.type !== "message" ||
+      entry.message.role !== "toolResult" ||
+      entry.message.toolName !== "todo"
+    ) continue;
+    const items = readItems(entry.message.details);
+    if (items) return items;
   }
-  return snapshot([]);
+  return [];
 };
 
 const phaseSummary = (item: TodoItem) => `#${item.id} ${item.title}`;
-const activeItem = (items: TodoItem[]) => items.find((item) => item.status === "active");
 const activeSummary = (items: TodoItem[]) => {
-  const active = activeItem(items);
-  return active ? `Active: ${phaseSummary(active)}` : "No active phase.";
+  const active = items.filter((item) => item.status === "active");
+  return active.length > 0
+    ? `Active: ${active.map(phaseSummary).join(", ")}`
+    : "No active phase.";
 };
 
 export const progressSummary = (items: TodoItem[]) =>
   `${items.filter((item) => item.status === "done").length}/${items.length}`;
 
-export const progressIcon = (items: TodoItem[], completedIds: number[] = []) => {
-  if (activeItem(items)) return "●";
-  if (completedIds.length > 0 || (items.length > 0 && items.every((item) => item.status === "done"))) return "✓";
+export const progressIcon = (items: TodoItem[]) => {
+  if (items.some((item) => item.status === "active")) return "●";
+  if (items.length > 0 && items.every((item) => item.status === "done")) return "✓";
   return "○";
 };
 
-const ACTION_FIELDS = {
-  new: ["action", "items"],
-  update: ["action", "completedIds", "activeId"],
-  list: ["action"],
-  clear: ["action"],
-};
-
-// Pi validates the parameter schema; only action-specific rules belong here.
 export const applyTodoAction = (items: TodoItem[], params: TodoParams): TodoOperation => {
   const { action } = params;
-  const operation = (
+  const result = (
     nextItems: TodoItem[],
-    extra: Partial<Omit<TodoOperation, "schemaVersion" | "action" | "items">>,
+    message: string,
+    details: Partial<Omit<TodoDetails, "items">> & { changed?: boolean } = {},
   ): TodoOperation => ({
-    schemaVersion: 2,
-    action,
     items: nextItems,
-    changed: false,
-    cleared: false,
-    ...extra,
+    message,
+    changed: true,
+    ...details,
   });
-  const error = (message: string) => operation(items, { error: message });
-  const extra = Object.keys(params).filter((key) => !ACTION_FIELDS[action].includes(key));
-  if (extra.length) return error(`unexpected field for ${action}: ${extra.join(", ")}`);
+  const error = (message: string) => result(items, "", { changed: false, error: message });
 
   switch (action) {
-    case "new": {
-      if (!params.items?.length) return error("items is required for new");
+    case "set": {
+      if (params.items === undefined) {
+        return error("items is required for set (pass an empty list to clear)");
+      }
       const titles = params.items.map((title) => title.trim());
       if (titles.some((title) => !title)) return error("phase titles cannot be empty");
+      if (titles.length === 0) {
+        return result([], "Cleared todo tracker.", { changed: items.length > 0 });
+      }
       const next = titles.map((title, index): TodoItem => ({
         id: index + 1,
         title,
         status: index === 0 ? "active" : "pending",
       }));
-      return operation(next, {
-        message: `Started with ${phaseSummary(next[0])}.`,
-        activatedId: next[0].id,
-        changed: true,
-      });
+      return result(next, `Set tracker. Active: ${phaseSummary(next[0])}.`);
     }
-    case "list":
-      return operation(items, { message: activeSummary(items) });
-    case "clear":
-      return operation([], {
-        message: "Cleared todo tracker.",
-        cleared: true,
-        changed: items.length > 0,
-      });
     case "update": {
-      if (params.completedIds === undefined && params.activeId === undefined) {
-        return error("completedIds or activeId is required for update");
+      const complete = new Set(params.completeIds ?? []);
+      const activate = new Set(params.activateIds ?? []);
+      if (complete.size === 0 && activate.size === 0) {
+        return error("completeIds or activateIds is required for update");
       }
+
       const byId = new Map(items.map((item) => [item.id, item]));
-      const requestedIds = new Set(params.completedIds);
-      for (const id of requestedIds) {
-        if (!byId.has(id)) return error(`item #${id} not found`);
-      }
-      if (params.activeId !== undefined) {
-        const target = byId.get(params.activeId);
-        if (!target) return error(`item #${params.activeId} not found`);
-        if (target.status === "done" || requestedIds.has(target.id)) {
-          return error(`item #${target.id} is complete`);
-        }
+      const missingId = [...complete, ...activate].find((id) => !byId.has(id));
+      if (missingId !== undefined) return error(`item #${missingId} not found`);
+      const overlapId = [...activate].find((id) => complete.has(id));
+      if (overlapId !== undefined) return error(`cannot complete and activate #${overlapId}`);
+      const alreadyDoneId = [...activate].find((id) => byId.get(id)?.status === "done");
+      if (alreadyDoneId !== undefined) return error(`item #${alreadyDoneId} is complete`);
+
+      const completedIds = [...complete].filter((id) => byId.get(id)?.status !== "done");
+      const activatedIds = [...activate].filter((id) => byId.get(id)?.status !== "active");
+      if (completedIds.length === 0 && activatedIds.length === 0) {
+        return result(items, `No change. ${activeSummary(items)}`, { changed: false });
       }
 
-      const previousActiveId = activeItem(items)?.id;
-      const completedIds = [...requestedIds].filter((id) => byId.get(id)!.status !== "done");
-      const next = items.map((item): TodoItem => ({
-        ...item,
-        status: requestedIds.has(item.id) ? "done" : item.status,
-      }));
+      const next = items.map((item): TodoItem => {
+        if (complete.has(item.id)) return { ...item, status: "done" };
+        if (activate.has(item.id)) return { ...item, status: "active" };
+        return item;
+      });
+
       if (next.every((item) => item.status === "done")) {
-        return operation([], {
-          message: "All phases complete.",
-          completedIds,
-          cleared: true,
-          changed: completedIds.length > 0,
-        });
+        return result([], "All phases complete.", { completedIds });
       }
 
-      const nextActiveId = params.activeId ?? activeItem(next)?.id ??
-        next.find((item) => item.status === "pending")!.id;
-      for (const item of next) {
-        if (item.id === nextActiveId) item.status = "active";
-        else if (item.status === "active") item.status = "pending";
+      const parts: string[] = [];
+      if (completedIds.length > 0) {
+        parts.push(`Completed ${completedIds.map((id) => `#${id}`).join(", ")}.`);
       }
-      const activated = nextActiveId !== previousActiveId;
-      const completed = completedIds.length > 0
-        ? `Completed ${completedIds.map((id) => `#${id}`).join(", ")}.`
-        : undefined;
-      return operation(next, {
-        message: completed
-          ? `${completed} ${activeSummary(next)}`
-          : activated ? activeSummary(next) : `No change. ${activeSummary(next)}`,
+      if (activatedIds.length > 0) {
+        parts.push(`Activated ${activatedIds.map((id) => `#${id}`).join(", ")}.`);
+      }
+      return result(next, `${parts.join(" ")} ${activeSummary(next)}`, {
         completedIds,
-        ...(activated ? { activatedId: nextActiveId } : {}),
-        changed: completedIds.length > 0 || activated,
+        activatedIds,
       });
     }
   }
 };
 
-export const todoMessage = (result: TodoOperation) =>
-  result.error ? `Error: ${result.error}` : (result.message ?? "ok");
-
-export const listContent = (items: TodoItem[]) => {
-  if (items.length === 0) return "No active todo tracker.";
-  return items.map((item) => {
+export const listContent = (items: TodoItem[]) =>
+  items.map((item) => {
     const mark = item.status === "done" ? "✓" : item.status === "active" ? "●" : "○";
     return `${mark} #${item.id} ${item.title}`;
   }).join("\n");
-};

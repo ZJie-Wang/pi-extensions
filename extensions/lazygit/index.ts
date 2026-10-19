@@ -1,52 +1,31 @@
-import { spawn } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 const COMMAND = "lazygit";
 const SHORTCUT = "ctrl+alt+l";
 
-let isOpen = false;
+type Notice = { message: string; type: "warning" | "error" };
 
-type LaunchResult =
-  | { kind: "exited"; code: number | null; signal: NodeJS.Signals | null }
-  | { kind: "failed"; message: string };
+function runLazygit(ctx: ExtensionContext): Promise<Notice | undefined> {
+  return ctx.ui.custom<Notice | undefined>((tui, _theme, _keybindings, done) => {
+    tui.stop();
+    process.stdout.write("\x1b[2J\x1b[H");
 
-function launch(cwd: string): Promise<Extract<LaunchResult, { kind: "exited" }>> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(COMMAND, [], {
-      cwd,
-      env: process.env,
-      stdio: "inherit",
-    });
+    const result = spawnSync(COMMAND, [], { cwd: ctx.cwd, stdio: "inherit" });
 
-    child.once("error", reject);
-    child.once("close", (code, signal) => resolve({ kind: "exited", code, signal }));
-  });
-}
+    tui.start();
+    tui.requestRender(true);
 
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  return String(error);
-}
+    let notice: Notice | undefined;
+    if (result.error) {
+      notice = { message: `Could not start lazygit: ${result.error.message}`, type: "error" };
+    } else if (result.signal) {
+      notice = { message: `lazygit stopped after receiving ${result.signal}`, type: "warning" };
+    } else if (result.status !== 0) {
+      notice = { message: `lazygit exited with status ${result.status}`, type: "warning" };
+    }
 
-function runInTerminal(ctx: ExtensionContext): Promise<LaunchResult> {
-  return ctx.ui.custom<LaunchResult>((tui, _theme, _keybindings, done) => {
-    void (async () => {
-      let result: LaunchResult;
-
-      try {
-        tui.stop();
-        process.stdout.write("\x1b[2J\x1b[H");
-        result = await launch(ctx.cwd);
-      } catch (error) {
-        result = { kind: "failed", message: errorMessage(error) };
-      } finally {
-        tui.start();
-        tui.requestRender(true);
-      }
-
-      done(result);
-    })();
-
+    done(notice);
     return { render: () => [], invalidate: () => {} };
   });
 }
@@ -62,27 +41,14 @@ async function openLazygit(ctx: ExtensionContext): Promise<void> {
     return;
   }
 
-  if (isOpen) return;
-  isOpen = true;
-
-  try {
-    const result = await runInTerminal(ctx);
-    if (result.kind === "failed") {
-      ctx.ui.notify(`Could not start lazygit: ${result.message}`, "error");
-    } else if (result.signal) {
-      ctx.ui.notify(`lazygit stopped after receiving ${result.signal}`, "warning");
-    } else if (result.code !== 0) {
-      ctx.ui.notify(`lazygit exited with status ${result.code}`, "warning");
-    }
-  } finally {
-    isOpen = false;
-  }
+  const notice = await runLazygit(ctx);
+  if (notice) ctx.ui.notify(notice.message, notice.type);
 }
 
 export default function lazygitExtension(pi: ExtensionAPI): void {
   pi.registerCommand(COMMAND, {
     description: "Open lazygit in the current working directory",
-    handler: async (_args, ctx) => openLazygit(ctx),
+    handler: (_args, ctx) => openLazygit(ctx),
   });
 
   pi.registerShortcut(SHORTCUT, {

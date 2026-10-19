@@ -6,7 +6,7 @@ Sharing extensions I built for my [pi agent harness](https://github.com/earendil
 
 | Extension | Tools | What it is |
 |---|---|---|
-| [ask-user](extensions/ask-user/README.md) | `ask_user` | Interactive question dialog — options with descriptions, multi-select, free text. |
+| [ask-user](extensions/ask-user/README.md) | `ask_user` | Interactive question dialog — options, multi-select, free text. |
 | [deepseek-web](extensions/deepseek-web/README.md) | `web_search`, `web_fetch` | Web search and page fetch through DeepSeek's tools API. |
 | [lazygit](extensions/lazygit/README.md) | - | Hands the terminal to lazygit in the current directory, then returns to pi. |
 | [subagents](extensions/subagents/README.md) | `subagent_run`, `subagent_control` | Isolated child pi agents with profiles, named threads, and background runs. |

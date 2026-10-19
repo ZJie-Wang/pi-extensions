@@ -8,7 +8,7 @@ export interface ProfileRefresh {
   warning?: string;
 }
 
-export function loadProfiles(directory: string, knownTools: ReadonlySet<string>): AgentProfile[] {
+function loadProfiles(directory: string): AgentProfile[] {
   if (!fs.existsSync(directory)) throw new Error(`Subagent profile directory does not exist: ${directory}`);
   const files = fs.readdirSync(directory, { withFileTypes: true })
     .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".md"))
@@ -20,7 +20,7 @@ export function loadProfiles(directory: string, knownTools: ReadonlySet<string>)
   return files.map((filePath) => {
     const content = fs.readFileSync(filePath, "utf8");
     const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
-    const profile = normalizeProfile(frontmatter, body, filePath, knownTools);
+    const profile = normalizeProfile(frontmatter, body, filePath);
     const previous = seen.get(profile.name);
     if (previous) throw new Error(`Duplicate subagent name "${profile.name}" in ${previous} and ${filePath}`);
     seen.set(profile.name, filePath);
@@ -33,14 +33,14 @@ export class ProfileStore {
   private signature: string;
   private lastWarning?: string;
 
-  constructor(private readonly directory: string, knownTools: ReadonlySet<string>) {
-    this.profiles = loadProfiles(directory, knownTools);
+  constructor(private readonly directory: string) {
+    this.profiles = loadProfiles(directory);
     this.signature = JSON.stringify(this.profiles);
   }
 
-  refresh(knownTools: ReadonlySet<string>): ProfileRefresh {
+  refresh(): ProfileRefresh {
     try {
-      const next = loadProfiles(this.directory, knownTools);
+      const next = loadProfiles(this.directory);
       const signature = JSON.stringify(next);
       const changed = signature !== this.signature;
       if (changed) {
@@ -57,8 +57,8 @@ export class ProfileStore {
     }
   }
 
-  list(): readonly AgentProfile[] {
-    return this.profiles;
+  names(): readonly string[] {
+    return this.profiles.map((profile) => profile.name);
   }
 
   get(name: string): AgentProfile | undefined {

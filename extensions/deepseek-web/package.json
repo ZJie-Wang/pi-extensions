@@ -1,0 +1,39 @@
+{
+  "name": "@zjie-wang/pi-deepseek-web",
+  "version": "0.1.0",
+  "description": "Web search and page fetch for Pi backed by DeepSeek's tools API",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "deepseek",
+    "web-search"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZJie-Wang/pi-extensions.git",
+    "directory": "extensions/deepseek-web"
+  },
+  "homepage": "https://github.com/ZJie-Wang/pi-extensions/tree/main/extensions/deepseek-web",
+  "bugs": "https://github.com/ZJie-Wang/pi-extensions/issues",
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

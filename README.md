@@ -7,6 +7,7 @@ Sharing extensions I built for my [pi agent harness](https://github.com/earendil
 | Extension | Tools | What it is |
 |---|---|---|
 | [ask-user](extensions/ask-user/README.md) | `ask_user` | Interactive question dialog — options with descriptions, multi-select, free text. |
+| [deepseek-web](extensions/deepseek-web/README.md) | `web_search`, `web_fetch` | Web search and page fetch through DeepSeek's tools API. |
 | [lazygit](extensions/lazygit/README.md) | - | Hands the terminal to lazygit in the current directory, then returns to pi. |
 | [subagents](extensions/subagents/README.md) | `subagent_run`, `subagent_control` | Isolated child pi agents with profiles, named threads, and background runs. |
 | [todo](extensions/todo/README.md) | `todo` | Multi-phase progress tracker with a live TUI widget. |
@@ -17,12 +18,13 @@ Install the extensions you want from npm:
 
 ```bash
 pi install npm:@zjie-wang/pi-ask-user
+pi install npm:@zjie-wang/pi-deepseek-web
 pi install npm:@zjie-wang/pi-lazygit
 pi install npm:@zjie-wang/pi-subagents
 pi install npm:@zjie-wang/pi-todo
 ```
 
-To load all four directly from GitHub instead:
+To load all extensions directly from GitHub instead:
 
 ```bash
 pi install git:github.com/ZJie-Wang/pi-extensions

@@ -14,6 +14,7 @@
   "pi": {
     "extensions": [
       "./extensions/ask-user/index.ts",
+      "./extensions/deepseek-web/index.ts",
       "./extensions/lazygit/index.ts",
       "./extensions/subagents/index.ts",
       "./extensions/todo/index.ts"

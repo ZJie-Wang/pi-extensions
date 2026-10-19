@@ -4,7 +4,7 @@ Sharing extensions I built for my [pi agent harness](https://github.com/earendil
 
 ## What's included
 
-| Extension | Tools | What it is |
+| Extension | Tools | What it does |
 |---|---|---|
 | [ask-user](extensions/ask-user/README.md) | `ask_user` | Ask questions mid-run. |
 | [deepseek-web](extensions/deepseek-web/README.md) | `web_search`, `web_fetch` | Web search and page fetch through DeepSeek's tools API. |

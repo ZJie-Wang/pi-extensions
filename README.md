@@ -6,11 +6,11 @@ Sharing extensions I built for my [pi agent harness](https://github.com/earendil
 
 | Extension | Tools | What it is |
 |---|---|---|
-| [ask-user](extensions/ask-user/README.md) | `ask_user` | Interactive question dialog — options, multi-select, free text. |
+| [ask-user](extensions/ask-user/README.md) | `ask_user` | Ask questions mid-run. |
 | [deepseek-web](extensions/deepseek-web/README.md) | `web_search`, `web_fetch` | Web search and page fetch through DeepSeek's tools API. |
 | [lazygit](extensions/lazygit/README.md) | - | Open lazygit in the same terminal tab. |
-| [subagents](extensions/subagents/README.md) | `subagent_run`, `subagent_control` | Isolated child pi agents with profiles, named threads, and background runs. |
-| [todo](extensions/todo/README.md) | `todo` | Multi-phase progress tracker with a live TUI widget. |
+| [subagents](extensions/subagents/README.md) | `subagent_run`, `subagent_control` | A relatively light subagent extension. |
+| [todo](extensions/todo/README.md) | `todo` | Track task progress. |
 
 ## Install
 
